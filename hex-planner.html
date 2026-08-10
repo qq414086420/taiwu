@@ -573,7 +573,7 @@ function saScore(cells,idx,pos2comp,coverRad){
   const n=cells.length; const K=(q,r)=>q+','+r;
   const defRes=state.defaultRes;
   const ty=i=>{const c=pos2comp[i];return c?c.type:'empty';};
-  const val=i=>{const c=pos2comp[i];return c?(c.val!==undefined?c.val:0):defRes;};
+  const val=i=>{const c=pos2comp[i];return (!c||c.type!=='resource')?defRes:c.val;};
   const cov=new Int32Array(n);
   for(let i=0;i<n;i++) if(ty(i)==='xuan')
     for(const ck of coverKeys(cells[i])){const j=idx.get(ck);if(j!==undefined)cov[j]++;}
