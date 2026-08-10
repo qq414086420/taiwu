@@ -649,7 +649,51 @@ function solvePlacement(pool,fixed,iters,seed){
   // 汇总每个格子放什么
   const placement=[];
   for(let i=0;i<n;i++){const c=bestState[i];if(c)placement.push({q:cells[i].q,r:cells[i].r,type:c.type,val:c.val});}
-  return {total:best,placement};
+  // 对称化后处理：在6种旋转等价解中选最对称、最居中的（旋转保分，故总分不变）
+  const sym = symmetrize(placement, best);
+  return {total:sym.total, placement:sym.placement};
+}
+
+// 对称化：对摆放施加6种旋转(保分)，选对称度最高、最居中、坐标规范最小的
+function rot60q(q,r){return [-r, q+r];}
+function symDegreeOf(groups){
+  const all=[];
+  for(const t in groups) for(const p of groups[t]) all.push([...p,t]);
+  const keyOf=arr=>arr.map(([q,r,t])=>t+'@'+q+','+r).sort().join('|');
+  const orig=keyOf(all);let cnt=0;
+  for(let mode=0;mode<12;mode++){
+    let trans=all.map(([q,r,t])=>{let a=q,b=r;
+      if(mode>=6){[a,b]=[a,-a-b];} // 镜像(q,r)->(q,-q-r)
+      for(let i=0;i<(mode%6);i++){[a,b]=rot60q(a,b);}
+      return[a,b,t];});
+    if(keyOf(trans)===orig)cnt++;
+  }
+  return cnt;
+}
+function symmetrize(placement, total){
+  const types=['xuan','kugong','jiayi','xunxu'];
+  const mkGroups=()=>{const g={xuan:[],kugong:[],jiayi:[],xunxu:[]};
+    for(const p of placement){const pt=p.type; if(g[pt]) g[pt].push([p.q,p.r]);} return g;};
+  let best=null;
+  for(let rot=0;rot<6;rot++){
+    const g=mkGroups();
+    for(const t of types){ g[t]=g[t].map(([q,r])=>{for(let i=0;i<rot;i++){[q,r]=rot60q(q,r);}return[q,r];}); }
+    // 居中度：所有点距原点距离平方和（越小越居中）
+    let rad=0;for(const t of types)for(const[q,r]of g[t])rad+=q*q+r*r+(q+r)*(q+r);
+    const deg=symDegreeOf(g);
+    // 规范键：类型+坐标排序
+    const keyStr=types.flatMap(t=>g[t].map(([q,r])=>t+'@'+q+','+r)).sort().join('|');
+    const cand={groups:g,deg,rad,keyStr};
+    // 优先：对称度高 > 距离近 > 字典序小
+    if(!best || cand.deg>best.deg
+       || (cand.deg===best.deg && cand.rad<best.rad-0.5)
+       || (cand.deg===best.deg && Math.abs(cand.rad-best.rad)<0.5 && cand.keyStr<best.keyStr)){
+      best=cand;
+    }
+  }
+  const out=[];
+  for(const t of types) for(const[q,r]of best.groups[t]) out.push({q,r,type:t});
+  return {total, placement:out, symDegree:best.deg};
 }
 
 // ---------- 视图 ----------
