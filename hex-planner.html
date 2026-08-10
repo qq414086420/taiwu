@@ -181,6 +181,7 @@
       </div>
       <div class="row">
         <button class="btn grow" id="btnFit">居中适配</button>
+        <button class="btn grow" id="btnRotate">↻ 旋转60°</button>
         <button class="btn grow" id="btnClearAll">清空全部</button>
       </div>
     </div>
@@ -826,6 +827,21 @@ async function solvePlacementExact(pool,fixed,iters,seed,onProgress){
 
 // 对称化：对摆放施加6种旋转(保分)，选对称度最高、最居中、坐标规范最小的
 function rot60q(q,r){return [-r, q+r];}
+// 整图旋转60°：把每个格子的 color/value/tag 平移到旋转后的坐标。半径R六边形旋转下不变。
+function rotateMap(){
+  // 先快照每格内容(深拷贝，避免清空时丢失)
+  const snap=[];
+  for(const c of state.cells.values()){
+    if(c.color||c.value||c.tag) snap.push({q:c.q,r:c.r,color:c.color,value:c.value,tag:c.tag});
+  }
+  for(const c of state.cells.values()){c.color=null;c.value=null;c.tag=null;}
+  for(const s of snap){
+    const [nq,nr]=rot60q(s.q,s.r);
+    const nc=state.cells.get(key(nq,nr));
+    if(nc){ nc.color=s.color; nc.value=s.value; nc.tag=s.tag; }
+  }
+  refreshAfterEdit();
+}
 function symDegreeOf(groups){
   const all=[];
   for(const t in groups) for(const p of groups[t]) all.push([...p,t]);
@@ -1157,6 +1173,7 @@ document.getElementById('coverRad').onchange=e=>{ state.coverRad=Math.max(1,+e.t
 document.getElementById('defaultResInput')&&(document.getElementById('defaultResInput').oninput=e=>{ state.defaultRes=Math.max(0,+e.target.value||0); refreshAfterEdit(); });
 ['optCover','optCoord','optVal','optGrid'].forEach(id=>document.getElementById(id).onchange=draw);
 document.getElementById('btnFit').onclick=fitView;
+document.getElementById('btnRotate').onclick=rotateMap;
 document.getElementById('btnClearAll').onclick=()=>{ if(confirm('清空所有格子的颜色/数值/标签？')){ for(const c of state.cells.values()){c.color=null;c.value=null;c.tag=null;} refreshAfterEdit(); } };
 
 function writeBackSolveResult(r, pool, meta){
