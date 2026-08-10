@@ -1,0 +1,1115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>六边形地图标注 · 玄机规划工作台</title>
+<style>
+  :root{
+    --bg:#0f1320; --panel:#171c2e; --panel2:#1f2540; --line:#2c3354;
+    --txt:#e6e9f5; --dim:#8b91b0; --accent:#7cc4ff; --gold:#ffd25a;
+    --good:#5fe0a0; --bad:#ff7a7a; --cell:#2b3252;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);
+    font:14px/1.5 "Segoe UI","Microsoft YaHei",sans-serif}
+  #app{display:flex;height:100vh;width:100vw;overflow:hidden}
+  #stage{flex:1;position:relative;background:radial-gradient(circle at 50% 40%, #161b2e 0%, #0c0f1a 80%);min-width:0}
+  #cv{display:block;width:100%;height:100%;cursor:crosshair}
+  #cv.sel{cursor:grab}
+  #cv.dragging{cursor:grabbing}
+  #hud{position:absolute;left:12px;top:12px;background:rgba(15,19,32,.82);
+    border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:12px;
+    color:var(--dim);pointer-events:none;backdrop-filter:blur(4px);max-width:60%}
+  #hud b{color:var(--accent)}
+  #coordHud{position:absolute;right:12px;top:12px;background:rgba(15,19,32,.82);
+    border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:12px;
+    color:var(--dim);pointer-events:none;backdrop-filter:blur(4px);font-family:ui-monospace,Consolas,monospace}
+  #side{width:380px;min-width:380px;background:var(--panel);border-left:1px solid var(--line);
+    display:flex;flex-direction:column;overflow:hidden}
+  .tabs{display:flex;border-bottom:1px solid var(--line);flex:none}
+  .tabs button{flex:1;background:none;border:0;color:var(--dim);padding:11px 2px;cursor:pointer;
+    font-size:13px;border-bottom:2px solid transparent}
+  .tabs button.active{color:var(--accent);border-bottom-color:var(--accent)}
+  .pane{flex:1;overflow-y:auto;padding:12px}
+  .pane h3{margin:16px 0 6px;font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px}
+  .pane h3:first-child{margin-top:0}
+  .row{display:flex;gap:8px;margin:6px 0;align-items:center}
+  .row label{width:78px;color:var(--dim);font-size:12px;flex:none}
+  .row .grow{flex:1}
+  input[type=number],input[type=text],select{width:100%;background:var(--panel2);
+    border:1px solid var(--line);color:var(--txt);border-radius:6px;padding:6px 8px;font-size:13px}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
+  button.btn{background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+    border-radius:6px;padding:7px 10px;cursor:pointer;font-size:13px}
+  button.btn:hover{border-color:var(--accent);color:var(--accent)}
+  button.btn.primary{background:var(--accent);color:#06223f;border-color:var(--accent);font-weight:600}
+  button.btn.gold{background:var(--gold);color:#3a2a00;border-color:var(--gold);font-weight:600}
+  button.btn.danger:hover{border-color:var(--bad);color:var(--bad)}
+  .tools{display:grid;grid-template-columns:repeat(auto-fit,minmax(64px,1fr));gap:6px;margin:6px 0}
+  .tools label{display:flex;flex-direction:column;align-items:center;gap:3px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:6px;padding:7px 2px;cursor:pointer;font-size:12px;color:var(--dim)}
+  .tools label:hover{border-color:var(--accent)}
+  .tools input{display:none}
+  .tools input:checked + span{color:var(--accent);font-weight:600}
+  .tools label:has(input:checked){border-color:var(--accent);background:#22305a}
+  .palette{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0}
+  .palette .sw{width:26px;height:26px;border-radius:5px;cursor:pointer;border:2px solid transparent}
+  .palette .sw.sel{border-color:#fff;box-shadow:0 0 0 2px var(--accent)}
+  .chk{display:flex;gap:14px;flex-wrap:wrap;margin:6px 0;font-size:13px;color:var(--dim)}
+  .chk label{display:inline-flex;gap:5px;align-items:center;cursor:pointer}
+  .stat{display:flex;justify-content:space-between;background:var(--panel2);border:1px solid var(--line);
+    border-radius:6px;padding:7px 10px;margin:4px 0;font-size:13px}
+  .stat .v{font-weight:700;font-family:ui-monospace,Consolas,monospace}
+  .stat.total{background:#1a2540;border-color:var(--accent)}
+  .stat.total .v{color:var(--gold);font-size:18px}
+  .hint{font-size:11px;color:var(--dim);margin-top:4px;line-height:1.5}
+  code{font-family:ui-monospace,Consolas,monospace;font-size:12px;background:#11162a;
+    padding:1px 5px;border-radius:4px;color:var(--accent)}
+  pre.formula{background:#0b0f1d;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12px;
+    white-space:pre-wrap;word-break:break-word;color:#cdd6f4;font-family:ui-monospace,Consolas,monospace;
+    max-height:320px;overflow:auto;margin:6px 0}
+  textarea{width:100%;min-height:130px;background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+    border-radius:8px;padding:8px;font-family:ui-monospace,Consolas,monospace;font-size:12px;resize:vertical}
+  .legendRow{display:flex;align-items:center;gap:7px;margin:5px 0;background:var(--panel2);
+    border:1px solid var(--line);border-radius:6px;padding:6px 8px}
+  .legendRow .sw{width:20px;height:20px;border-radius:4px;flex:none;border:1px solid #0006}
+  .legendRow .tg{width:22px;text-align:center;font-weight:700;color:var(--gold);flex:none}
+  .legendRow .hx{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--dim);flex:none;width:62px}
+  .legendRow input{flex:1}
+  .hidden{display:none!important}
+  .mono{font-family:ui-monospace,Consolas,monospace}
+  .help{font-size:13px;color:var(--txt);line-height:1.7}
+  .help b{color:var(--accent)}
+  .help p{color:var(--dim);margin:6px 0}
+  .help table{border-collapse:collapse;width:100%;margin:6px 0;font-size:12px}
+  .help th,.help td{border:1px solid var(--line);padding:5px 7px;text-align:left}
+  .help th{background:var(--panel2);color:var(--accent)}
+  .xg-item{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:7px 9px;
+    margin:4px 0;font-size:12px;display:flex;justify-content:space-between;align-items:center}
+  .xg-item .c{color:var(--gold);font-family:ui-monospace,Consolas,monospace}
+  .xg-item .n{color:var(--good);font-weight:700}
+  .gather-row{display:flex;justify-content:space-between;font-size:11px;padding:3px 8px;
+    font-family:ui-monospace,Consolas,monospace;color:var(--dim);border-bottom:1px solid #1dcello}
+  .gather-row .contrib{color:var(--good);font-weight:700}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="hud">左键=当前工具 · <b>右键拖动</b>=平移 · 滚轮=缩放 · 缩放 <b id="hudZoom">100%</b></div>
+    <div id="coordHud">—</div>
+  </div>
+
+  <div id="side">
+    <div class="tabs">
+      <button class="active" data-tab="edit">编辑</button>
+      <button data-tab="legend">图例</button>
+      <button data-tab="plan">规划</button>
+      <button data-tab="data">数据</button>
+      <button data-tab="help">说明</button>
+    </div>
+
+    <!-- ===== 编辑 ===== -->
+    <div class="pane" id="pane-edit">
+      <h3>操作工具（左键）</h3>
+      <div class="tools" id="opTools">
+        <label><input type="radio" name="tool" value="select" checked><span>▱ 选择</span></label>
+        <label><input type="radio" name="tool" value="paint"><span>🖌 涂色</span></label>
+        <label><input type="radio" name="tool" value="value"><span>🔢 数值</span></label>
+        <label><input type="radio" name="tool" value="erase"><span>⌫ 擦除</span></label>
+      </div>
+
+      <h3>格子类型（左键设置/拖动批量）</h3>
+      <div class="tools" id="typeTools">
+        <label><input type="radio" name="tool" value="plain"><span>普通</span></label>
+        <label><input type="radio" name="tool" value="xuan"><span>✦玄机</span></label>
+        <label><input type="radio" name="tool" value="kugong"><span>⚒苦功</span></label>
+        <label><input type="radio" name="tool" value="jiayi"><span>◕嫁衣</span></label>
+        <label><input type="radio" name="tool" value="xunxu"><span>↻循序</span></label>
+      </div>
+
+      <h3>画笔参数</h3>
+      <div class="palette" id="palette"></div>
+      <div class="row">
+        <label>自定义色</label>
+        <input type="color" id="curColorPick" class="grow" value="#3498db">
+      </div>
+      <div class="row">
+        <label>当前数值</label>
+        <input type="number" id="curValue" class="grow" placeholder="涂数值工具用；留空=清除">
+      </div>
+
+      <h3>选中格子</h3>
+      <div class="stat"><span>坐标 (q,r)</span><span class="v" id="selCoord">— 未选中 —</span></div>
+      <div class="row">
+        <label>类型</label>
+        <select id="selType" class="grow" disabled>
+          <option value="plain">普通</option>
+          <option value="xuan">玄机 ✦</option>
+          <option value="kugong">苦功 ⚒ (+2邻居)</option>
+          <option value="jiayi">嫁衣 ◕ (+1邻居)</option>
+          <option value="xunxu">循序 ↻ (+覆盖数)</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>基础数值</label><input type="number" id="selValue" class="grow" placeholder="(空=0)" disabled>
+      </div>
+      <div class="row">
+        <label>颜色</label><input type="color" id="selColor" class="grow" disabled>
+        <button class="btn" id="selClearColor" disabled>去色</button>
+      </div>
+      <div class="row">
+        <button class="btn danger grow" id="btnClearCell" disabled>清空此格</button>
+      </div>
+      <div class="hint" id="selHint"></div>
+
+      <h3>地图与视图</h3>
+      <div class="row">
+        <label>地图半径</label><input type="number" id="mapR" class="grow" value="7" min="1" max="14">
+        <button class="btn" id="btnRebuild">重建</button>
+      </div>
+      <div class="row">
+        <label>玄机半径</label><input type="number" id="coverRad" class="grow" value="3" min="1" max="6">
+      </div>
+      <div class="chk">
+        <label><input type="checkbox" id="optCover" checked>覆盖范围</label>
+        <label><input type="checkbox" id="optCoord">坐标</label>
+        <label><input type="checkbox" id="optVal" checked>数值</label>
+        <label><input type="checkbox" id="optGrid" checked>网格线</label>
+      </div>
+      <div class="row">
+        <button class="btn grow" id="btnFit">居中适配</button>
+        <button class="btn grow" id="btnClearAll">清空全部</button>
+      </div>
+    </div>
+
+    <!-- ===== 图例 ===== -->
+    <div class="pane hidden" id="pane-legend">
+      <h3>内置类型（自动识别）</h3>
+      <div class="hint">标签含这些字即自动判定为对应类型：<code>玄</code>玄机 · <code>苦</code>苦功 · <code>嫁</code>嫁衣 · <code>循/序</code>循序。</div>
+      <h3>颜色含义</h3>
+      <div id="legendColor"></div>
+      <h3>其它标签含义</h3>
+      <div id="legendTag"></div>
+      <div class="hint" style="margin-top:10px">提示：类型由标签自动判定，颜色含义请在此填写，导出时一并带上。</div>
+    </div>
+
+    <!-- ===== 规划 ===== -->
+    <div class="pane hidden" id="pane-plan">
+      <h3>总分</h3>
+      <div class="stat total"><span>总资源得分</span><span class="v" id="grandTotal">0</span></div>
+      <div class="hint">= Σ(被采集格 实际分 × 被几个玄机覆盖)。被采集格=除玄机格外的所有格子（普通/循序/苦功/嫁衣）。</div>
+
+      <h3>玄机格采集明细</h3>
+      <div id="xgList"><div class="hint">尚无玄机格。</div></div>
+
+      <h3>被采集格明细</h3>
+      <div id="gatherList"><div class="hint">无被采集格。</div></div>
+
+      <h3>自动排布求解</h3>
+      <div class="hint">输入这局拿到的<b>特殊格数量</b>，模拟退火会把它们摆到空位使总分最大。<b>每格背景资源默认为1</b>（见下方"背景资源"）。求解前会自动清空所有特殊格重新摆放，无残留干扰。</div>
+      <div class="row">
+        <label>玄机×<input type="number" id="cntXuan" value="3" min="0" max="6" style="width:48px"></label>
+        <label>苦功×<input type="number" id="cntKugong" value="0" min="0" max="20" style="width:48px"></label>
+        <label>嫁衣×<input type="number" id="cntJiayi" value="0" min="0" max="20" style="width:48px"></label>
+        <label>循序×<input type="number" id="cntXunxu" value="0" min="0" max="10" style="width:48px"></label>
+      </div>
+      <div class="row">
+        <label>背景资源</label><input type="number" id="defaultResInput" value="1" min="0" max="20" class="grow">
+        <span class="hint" style="flex:none">每格默认资源</span>
+      </div>
+      <div class="row">
+        <label>迭代次数</label><input type="number" id="solveIters" value="60000" min="1000" max="500000" step="1000" class="grow">
+      </div>
+      <div class="row">
+        <label>随机种子</label><input type="number" id="solveSeed" value="1" min="1" max="999999" class="grow">
+      </div>
+      <div class="row">
+        <button class="btn primary grow" id="btnSolve">★ 求最优摆布</button>
+        <button class="btn grow" id="btnSolveAgain">↻ 再试(换种子)</button>
+      </div>
+      <div class="row">
+        <button class="btn grow" id="btnExportSolve">📋 导出规划结果(贴给AI)</button>
+      </div>
+      <div class="hint" id="solveHint"></div>
+    </div>
+
+    <!-- ===== 数据 ===== -->
+    <div class="pane hidden" id="pane-data">
+      <h3>HexMap 文本（与 AI 交流用）</h3>
+      <div class="row">
+        <button class="btn grow" id="btnExport">↓ 导出当前地图</button>
+        <button class="btn primary grow" id="btnApply">↑ 应用文本</button>
+      </div>
+      <textarea id="ioText" placeholder="点「导出」生成，或在此粘贴 HexMap 文本后「应用」"></textarea>
+      <div class="hint">格式说明见「说明」页。导入兼容 <code>循序2</code> / <code>苦功_1</code> 等带数字标签（数字=资源值）。</div>
+
+      <h3>JSON 备份</h3>
+      <div class="row">
+        <button class="btn grow" id="btnExportJSON">导出 JSON</button>
+        <button class="btn grow" id="btnImportJSON">导入 JSON</button>
+        <button class="btn grow" id="btnCopyJSON">复制</button>
+      </div>
+      <textarea id="jsonText" placeholder="完整数据备份..."></textarea>
+    </div>
+
+    <!-- ===== 说明 ===== -->
+    <div class="pane hidden" id="pane-help">
+      <div class="help" id="helpBody"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   六边形地图标注 · 玄机规划工作台
+   axial 坐标 (q,r) · pointy-top
+   格子类型由标签自动派生
+   ============================================================ */
+const SQ3 = Math.sqrt(3);
+const canvas = document.getElementById('cv');
+const ctx = canvas.getContext('2d');
+
+const PALETTE = [
+  '#e74c3c','#e67e22','#f1c40f','#2ecc71','#1abc9c',
+  '#3498db','#9b59b6','#e91e8c','#ecf0f1','#95a5a6','#2c3e50'
+];
+
+// 六向邻居 (axial)
+const NEI = [[1,0],[1,-1],[0,-1],[-1,0],[-1,1],[0,1]];
+
+// 类型显示样式
+const TYPE_STYLE = {
+  xuan:   {fill:'#ffd25a', edge:'#ffe890', text:'玄', textColor:'#3a2a00'},
+  kugong: {fill:'#d96b1f', edge:'#f5b96b', text:'苦', textColor:'#fff'},
+  jiayi:  {fill:'#8e44ad', edge:'#c39bd3', text:'嫁', textColor:'#fff'},
+  xunxu:  {fill:'#16a085', edge:'#7eecd0', text:'循', textColor:'#04261f'},
+  plain:  null,
+};
+
+const state = {
+  hexR: 7,
+  coverRad: 3,
+  defaultRes: 1,            // 空格默认资源（背景资源）
+  cells: new Map(),          // "q,r" -> {q,r,value,color,tag}
+  legendColor: new Map(),
+  legendTag: new Map(),
+  sel: null, hover: null,
+  view: { x:0, y:0, scale:1 },
+  hexSize: 34,
+  tool: 'select',
+  curColor: '#3498db',
+  curValue: '',
+  drag: null,
+};
+
+const key = (q,r)=> q+','+r;
+const parseKey = k => { const [q,r]=k.split(',').map(Number); return {q,r}; };
+function cellOf(q,r){ return state.cells.get(key(q,r)); }
+function ensureCell(q,r){
+  let c = state.cells.get(key(q,r));
+  if(!c){ c={q,r,value:null,color:null,tag:null}; state.cells.set(key(q,r),c); }
+  return c;
+}
+
+// ---------- 类型派生 ----------
+function typeOf(c){
+  if(!c || !c.tag) return 'plain';
+  const t=c.tag;
+  if(t.includes('玄')) return 'xuan';
+  if(t.includes('苦')) return 'kugong';
+  if(t.includes('嫁')) return 'jiayi';
+  if(t.includes('循')||t.includes('序')) return 'xunxu';
+  return 'plain';
+}
+function tagForType(ty){
+  return {xuan:'玄', kugong:'苦', jiayi:'嫁', xunxu:'循', plain:null}[ty];
+}
+function isGatherable(ty){ return ty!=='xuan'; }
+
+// ---------- 地图生成 ----------
+function rebuildMap(keep){
+  const old = keep ? new Map(state.cells) : null;
+  state.cells.clear();
+  const R = state.hexR;
+  for(let q=-R;q<=R;q++){
+    for(let r=Math.max(-R,-q-R); r<=Math.min(R,-q+R); r++){
+      state.cells.set(key(q,r), {q,r,value:null,color:null,tag:null});
+    }
+  }
+  if(old){
+    for(const [k,c] of old){
+      const nc = state.cells.get(k);
+      if(nc){ nc.value=c.value; nc.color=c.color; nc.tag=c.tag; }
+    }
+  }
+  fitView(); draw();
+}
+
+// ---------- 几何 ----------
+function hexToPixel(q,r){
+  const s=state.hexSize*state.view.scale;
+  return { x: s*(SQ3*q + SQ3/2*r) + state.view.x,
+           y: s*(1.5*r) + state.view.y };
+}
+function pixelToHex(px,py){
+  const s=state.hexSize*state.view.scale;
+  const x=(px-state.view.x)/s, y=(py-state.view.y)/s;
+  return cubeRound(SQ3/3*x - y/3, 2*y/3);
+}
+function cubeRound(q,r){
+  let x=q, z=r, y=-x-z;
+  let rx=Math.round(x), ry=Math.round(y), rz=Math.round(z);
+  const dx=Math.abs(rx-x), dy=Math.abs(ry-y), dz=Math.abs(rz-z);
+  if(dx>dy && dx>dz) rx=-ry-rz; else if(dy>dz) ry=-rx-rz; else rz=-rx-ry;
+  return {q:rx, r:rz};
+}
+function hexCorners(cx,cy,size){
+  const pts=[];
+  for(let i=0;i<6;i++){
+    const ang=Math.PI/180*(60*i-30);
+    pts.push([cx+size*Math.cos(ang), cy+size*Math.sin(ang)]);
+  }
+  return pts;
+}
+function coverKeys(center){
+  const N=state.coverRad, set=new Set();
+  for(let dq=-N;dq<=N;dq++){
+    const lo=Math.max(-N,-dq-N), hi=Math.min(N,-dq+N);
+    for(let dr=lo;dr<=hi;dr++){
+      const q=center.q+dq, r=center.r+dr;
+      if(state.cells.has(key(q,r))) set.add(key(q,r));
+    }
+  }
+  return set;
+}
+function neighborsOf(q,r){
+  return NEI.map(([dq,dr])=>({q:q+dq,r:r+dr}));
+}
+
+// ---------- 渲染 ----------
+function resize(){
+  const r=canvas.getBoundingClientRect();
+  const dpr=window.devicePixelRatio||1;
+  canvas.width=r.width*dpr; canvas.height=r.height*dpr;
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  draw();
+}
+function drawHex(cx,cy,size,fill,stroke,lw){
+  ctx.beginPath();
+  const pts=hexCorners(cx,cy,size);
+  pts.forEach((p,i)=> i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));
+  ctx.closePath();
+  if(fill){ctx.fillStyle=fill;ctx.fill();}
+  if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=lw;ctx.stroke();}
+}
+function heatColor(v){
+  const t=Math.min(1, v/120);
+  return `hsl(${Math.round(210-t*210)},72%,55%)`;
+}
+function lighten(color, dl){
+  let m=color.match(/hsl\(([-\d.]+),\s*([\d.]+)%,\s*([\d.]+)%\)/);
+  if(m){ const l=Math.min(95,Math.max(5,parseFloat(m[3])+dl*100)); return `hsl(${m[1]},${m[2]}%,${l}%)`; }
+  m=color.match(/^#([0-9a-f]{6})$/i);
+  if(m){
+    let r=parseInt(m[1].slice(0,2),16),g=parseInt(m[1].slice(2,4),16),b=parseInt(m[1].slice(4,6),16);
+    r=Math.round(r+(255-r)*dl); g=Math.round(g+(255-g)*dl); b=Math.round(b+(255-b)*dl);
+    return '#'+[r,g,b].map(x=>x.toString(16).padStart(2,'0')).join('');
+  }
+  return color;
+}
+function draw(){
+  ctx.clearRect(0,0,canvas.clientWidth,canvas.clientHeight);
+  const o={
+    cover:document.getElementById('optCover').checked,
+    coord:document.getElementById('optCoord').checked,
+    val:document.getElementById('optVal').checked,
+    grid:document.getElementById('optGrid').checked,
+  };
+  const size=state.hexSize*state.view.scale;
+
+  // 覆盖集
+  let coverSet=new Set();
+  if(o.cover){
+    for(const c of state.cells.values()){
+      if(typeOf(c)==='xuan') for(const ck of coverKeys(c)) coverSet.add(ck);
+    }
+  }
+
+  // 填充
+  for(const c of state.cells.values()){
+    const p=hexToPixel(c.q,c.r);
+    const ty=typeOf(c);
+    const st=TYPE_STYLE[ty];
+    const inCover = coverSet.has(key(c.q,c.r));
+    let fill='#2b3252';
+    if(st) fill=st.fill;
+    else if(c.color) fill=c.color;
+    else if(c.value!==null) fill=heatColor(c.value);
+    if(inCover && ty!=='xuan') fill=lighten(fill,0.16);
+    drawHex(p.x,p.y,size, fill, o.grid?'#3a4270':'#2f3656', o.grid?1.1:0.8);
+  }
+  // 覆盖蓝边
+  if(o.cover){
+    for(const ck of coverSet){
+      const c=state.cells.get(ck); if(!c||typeOf(c)==='xuan') continue;
+      const p=hexToPixel(c.q,c.r);
+      drawHex(p.x,p.y,size, null, 'rgba(124,196,255,.6)', 1.3);
+    }
+  }
+  // 类型边框
+  for(const c of state.cells.values()){
+    const ty=typeOf(c); const st=TYPE_STYLE[ty]; if(!st) continue;
+    const p=hexToPixel(c.q,c.r);
+    drawHex(p.x,p.y,size, null, st.edge, 2.3);
+  }
+  // 文字
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  for(const c of state.cells.values()){
+    const p=hexToPixel(c.q,c.r);
+    const ty=typeOf(c); const st=TYPE_STYLE[ty];
+    if(st){
+      ctx.fillStyle=st.textColor; ctx.font='bold '+(size*0.5)+'px sans-serif';
+      ctx.fillText(st.text, p.x, p.y - (o.val&&c.value!==null?size*0.16:0));
+      if(o.val && c.value!==null){
+        ctx.font='bold '+(size*0.3)+'px sans-serif';
+        ctx.fillText(c.value, p.x, p.y+size*0.36);
+      }
+    } else {
+      if(o.val && c.value!==null){
+        ctx.fillStyle='#fff'; ctx.font='bold '+(size*0.46)+'px sans-serif';
+        ctx.fillText(c.value, p.x, p.y);
+      }
+      if(c.tag){
+        ctx.fillStyle='#ffe890'; ctx.font='bold '+(size*0.3)+'px sans-serif';
+        ctx.fillText(c.tag, p.x, p.y+size*0.34);
+      }
+    }
+    if(o.coord && size>20){
+      ctx.fillStyle='rgba(230,233,245,.45)';
+      ctx.font=(size*0.22)+'px ui-monospace,Consolas,monospace';
+      ctx.fillText(`${c.q},${c.r}`, p.x, p.y+size*0.58);
+    }
+  }
+  // 选中
+  if(state.sel && state.cells.has(key(state.sel.q,state.sel.r))){
+    const p=hexToPixel(state.sel.q,state.sel.r);
+    drawHex(p.x,p.y,size, null, '#7cc4ff', 3);
+  }
+  document.getElementById('hudZoom').textContent=Math.round(state.view.scale*100)+'%';
+}
+
+// ---------- 核心计算 ----------
+// 给定玄机格坐标集合 xuanKeys，返回完整统计
+function computeAll(xuanKeys){
+  const xset = new Set(xuanKeys);
+  // 覆盖计数
+  const coverMap = new Map();
+  for(const k of xset){
+    const c = parseKey(k);
+    for(const ck of coverKeys(c)) coverMap.set(ck,(coverMap.get(ck)||0)+1);
+  }
+  // 实际分数
+  const scores = new Map();
+  for(const c of state.cells.values()){
+    const k=key(c.q,c.r);
+    const ty=typeOf(c);
+    if(ty==='xuan') continue;
+    let real = c.value===null ? state.defaultRes : Number(c.value);
+    let kg=0, jy=0;
+    for(const nb of neighborsOf(c.q,c.r)){
+      const nc=state.cells.get(key(nb.q,nb.r));
+      if(!nc) continue;
+      const nt=typeOf(nc);
+      if(nt==='kugong') kg++; else if(nt==='jiayi') jy++;
+    }
+    real += kg*2 + jy*1;
+    if(ty==='xunxu'){
+      let cov=0;
+      for(const nb of neighborsOf(c.q,c.r)){
+        const nk=key(nb.q,nb.r);
+        const nc=state.cells.get(nk);
+        if(!nc) continue;
+        if(typeOf(nc)==='xuan') continue;
+        if((coverMap.get(nk)||0)>0) cov++;
+      }
+      real += cov;
+    }
+    const count = coverMap.get(k)||0;
+    scores.set(k,{cell:c,type:ty,base:c.value===null?state.defaultRes:Number(c.value),real,count});
+  }
+  // 总分与被采集格
+  let total=0; const gathered=[];
+  for(const [k,s] of scores){
+    if(isGatherable(s.type) && s.count>0){
+      const contrib=s.real*s.count; total+=contrib;
+      gathered.push({...s,contrib});
+    }
+  }
+  // 每个玄机格采集量(ADD: 各算各的)
+  const perXuan=[];
+  for(const k of xset){
+    const ctr=parseKey(k); let g=0;
+    for(const ck of coverKeys(ctr)){
+      const s=scores.get(ck);
+      if(s && isGatherable(s.type)) g+=s.real;
+    }
+    perXuan.push({key:k,q:ctr.q,r:ctr.r,gathered:g});
+  }
+  return {coverMap,scores,total,gathered,perXuan};
+}
+
+function currentXuanKeys(){
+  const arr=[];
+  for(const c of state.cells.values()) if(typeOf(c)==='xuan') arr.push(key(c.q,c.r));
+  return arr;
+}
+
+// ---------- 模拟退火求解器：组件池排布 ----------
+// 组件类型：xuan玄机 / kugong苦功 / jiayi嫁衣 / xunxu循序 / resource资源(带val)
+function saScore(cells,idx,pos2comp,coverRad){
+  const n=cells.length; const K=(q,r)=>q+','+r;
+  const defRes=state.defaultRes;
+  const ty=i=>{const c=pos2comp[i];return c?c.type:'empty';};
+  const val=i=>{const c=pos2comp[i];return c?(c.val!==undefined?c.val:0):defRes;};
+  const cov=new Int32Array(n);
+  for(let i=0;i<n;i++) if(ty(i)==='xuan')
+    for(const ck of coverKeys(cells[i])){const j=idx.get(ck);if(j!==undefined)cov[j]++;}
+  let total=0;
+  for(let i=0;i<n;i++){
+    const t=ty(i); if(t==='xuan')continue;
+    let real=val(i),kg=0,jy=0;
+    for(const[dq,dr]of NEI){const j=idx.get(K(cells[i].q+dq,cells[i].r+dr));if(j===undefined)continue;
+      const tj=ty(j);if(tj==='kugong')kg++;else if(tj==='jiayi')jy++;}
+    real+=kg*2+jy;
+    if(t==='xunxu'){let cv=0;for(const[dq,dr]of NEI){const j=idx.get(K(cells[i].q+dq,cells[i].r+dr));if(j===undefined)continue;if(ty(j)==='xuan')continue;if(cov[j]>0)cv++;}real+=cv;}
+    if(cov[i]>0)total+=real*cov[i];
+  }
+  return total;
+}
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+// pool: {xuan,kugong,jiayi,xunxu,resources:[numbers]}
+// fixed: [{q,r,type,val?}] 地图上锁死不动的格子（如已固定的特殊格/资源）
+function solvePlacement(pool,fixed,iters,seed){
+  const cells=[...state.cells.values()];
+  const n=cells.length;
+  const idx=new Map(); cells.forEach((c,i)=>idx.set(key(c.q,c.r),i));
+  const pos2comp=new Array(n).fill(null);
+  const lockedIdx=new Set();
+  for(const f of fixed){
+    const i=idx.get(key(f.q,f.r)); if(i===undefined)continue;
+    pos2comp[i]={type:f.type, val:f.val}; lockedIdx.add(i);
+  }
+  const comps=[];
+  for(let i=0;i<(pool.xuan||0);i++)comps.push({type:'xuan'});
+  for(let i=0;i<(pool.kugong||0);i++)comps.push({type:'kugong'});
+  for(let i=0;i<(pool.jiayi||0);i++)comps.push({type:'jiayi'});
+  for(let i=0;i<(pool.xunxu||0);i++)comps.push({type:'xunxu'});
+  for(const v of(pool.resources||[]))comps.push({type:'resource',val:v});
+  const free=[]; for(let i=0;i<n;i++) if(!lockedIdx.has(i)) free.push(i);
+  if(comps.length>free.length) return {total:0,msg:'组件数('+comps.length+')超过空位数('+free.length+')'};
+  const rng=mulberry32(seed||1);
+  // 随机初始
+  const order=free.slice();for(let i=order.length-1;i>0;i--){const j=Math.floor(rng()*(i+1));[order[i],order[j]]=[order[j],order[i]];}
+  for(let i=0;i<comps.length;i++) pos2comp[order[i]]=comps[i];
+  let cur=saScore(cells,idx,pos2comp,state.coverRad);
+  let best=cur, bestState=pos2comp.map(c=>c?{...c}:null);
+  const T0=Math.max(2,cur*0.15+5);
+  for(let it=0;it<iters;it++){
+    const T=T0*Math.pow(0.0001/T0, it/iters)+0.001;
+    const freeList=[];for(let i=0;i<n;i++)if(!lockedIdx.has(i))freeList.push(i);
+    if(rng()<0.45){
+      const occ=[];for(const i of freeList)if(pos2comp[i])occ.push(i);
+      if(occ.length===0)continue;
+      const emp=[];for(const i of freeList)if(!pos2comp[i])emp.push(i);
+      const from=occ[Math.floor(rng()*occ.length)];
+      if(emp.length>0 && rng()<0.85){
+        const to=emp[Math.floor(rng()*emp.length)];
+        pos2comp[to]=pos2comp[from];pos2comp[from]=null;
+        const nv=saScore(cells,idx,pos2comp,state.coverRad);const d=nv-cur;
+        if(d>=0||rng()<Math.exp(d/T))cur=nv; else{pos2comp[from]=pos2comp[to];pos2comp[to]=null;}
+      }else{
+        const to=freeList[Math.floor(rng()*freeList.length)];
+        if(pos2comp[to])continue;
+        pos2comp[to]=pos2comp[from];pos2comp[from]=null;
+        const nv=saScore(cells,idx,pos2comp,state.coverRad);const d=nv-cur;
+        if(d>=0||rng()<Math.exp(d/T))cur=nv; else{pos2comp[from]=pos2comp[to];pos2comp[to]=null;}
+      }
+    }else{
+      let a=freeList[Math.floor(rng()*freeList.length)],b=freeList[Math.floor(rng()*freeList.length)];
+      if(a===b)continue;
+      const ta=pos2comp[a],tb=pos2comp[b];pos2comp[a]=tb;pos2comp[b]=ta;
+      const nv=saScore(cells,idx,pos2comp,state.coverRad);const d=nv-cur;
+      if(d>=0||rng()<Math.exp(d/T))cur=nv; else{pos2comp[a]=ta;pos2comp[b]=tb;}
+    }
+    if(cur>best){best=cur;bestState=pos2comp.map(c=>c?{...c}:null);}
+  }
+  // 汇总每个格子放什么
+  const placement=[];
+  for(let i=0;i<n;i++){const c=bestState[i];if(c)placement.push({q:cells[i].q,r:cells[i].r,type:c.type,val:c.val});}
+  return {total:best,placement};
+}
+
+// ---------- 视图 ----------
+function fitView(){
+  let minx=1e9,miny=1e9,maxx=-1e9,maxy=-1e9;
+  for(const c of state.cells.values()){
+    const s=state.hexSize;
+    const x=s*(SQ3*c.q+SQ3/2*c.r), y=s*1.5*c.r;
+    minx=Math.min(minx,x);maxx=Math.max(maxx,x);miny=Math.min(miny,y);maxy=Math.max(maxy,y);
+  }
+  if(!isFinite(minx)) return;
+  const w=canvas.clientWidth, h=canvas.clientHeight;
+  const pad=state.hexSize+8;
+  const sx=(w-pad*2)/Math.max(1,(maxx-minx+state.hexSize*SQ3));
+  const sy=(h-pad*2)/Math.max(1,(maxy-miny+state.hexSize*2));
+  const scale=Math.max(0.3,Math.min(2.4,Math.min(sx,sy)));
+  state.view.scale=scale;
+  const cx=(minx+maxx)/2, cy=(miny+maxy)/2;
+  state.view.x=w/2-cx*scale; state.view.y=h/2-cy*scale;
+  draw();
+}
+
+// ---------- 工具操作 ----------
+function applyTool(q,r, allowToggle){
+  const c=ensureCell(q,r);
+  const cur=typeOf(c);
+  switch(state.tool){
+    case 'paint': c.color=state.curColor; break;
+    case 'value': c.value = state.curValue===''?null:Number(state.curValue); break;
+    case 'erase': c.color=null; c.value=null; c.tag=null; break;
+    case 'plain': c.tag=null; break;
+    case 'xuan':   c.tag = (allowToggle && cur==='xuan')   ? null : '玄'; break;
+    case 'kugong': c.tag = (allowToggle && cur==='kugong') ? null : '苦'; break;
+    case 'jiayi':  c.tag = (allowToggle && cur==='jiayi')  ? null : '嫁'; break;
+    case 'xunxu':  c.tag = (allowToggle && cur==='xunxu')  ? null : '循'; break;
+  }
+}
+
+// ---------- 交互 ----------
+canvas.addEventListener('contextmenu',e=>e.preventDefault());
+let moved=false, panning=false;
+function evHex(e){ const r=canvas.getBoundingClientRect(); return pixelToHex(e.clientX-r.left, e.clientY-r.top); }
+canvas.addEventListener('mousedown',e=>{
+  moved=false;
+  if(e.button===2 || state.tool==='select'){
+    panning=true; state.drag={x:e.clientX,y:e.clientY,vx:state.view.x,vy:state.view.y,pan:true};
+    canvas.classList.add('dragging'); return;
+  }
+  panning=false;
+  const h=evHex(e);
+  if(state.cells.has(key(h.q,h.r))){
+    applyTool(h.q,h.r,true);
+    state.drag={lastKey:key(h.q,h.r)};
+    refreshAfterEdit();
+  }
+});
+window.addEventListener('mousemove',e=>{
+  const h=evHex(e);
+  const inMap=state.cells.has(key(h.q,h.r));
+  state.hover = inMap?h:null;
+  document.getElementById('coordHud').textContent = inMap?`q=${h.q} r=${h.r}`:'—';
+  if(state.drag){
+    if(state.drag.pan){
+      const dx=e.clientX-state.drag.x, dy=e.clientY-state.drag.y;
+      if(Math.abs(dx)+Math.abs(dy)>3) moved=true;
+      state.view.x=state.drag.vx+dx; state.view.y=state.drag.vy+dy; draw();
+    }else if(state.drag.lastKey!==undefined && inMap){
+      const k=key(h.q,h.r);
+      if(k!==state.drag.lastKey){
+        if(['paint','erase','value','plain','xuan','kugong','jiayi','xunxu'].includes(state.tool)){
+          applyTool(h.q,h.r,false);
+        }
+        state.drag.lastKey=k; refreshAfterEdit();
+      }
+    }
+  } else { draw(); }
+});
+window.addEventListener('mouseup',e=>{
+  if(!moved && !panning && state.tool==='select'){
+    const h=evHex(e);
+    if(state.cells.has(key(h.q,h.r))){ state.sel={q:h.q,r:h.r}; updateSelPanel(); draw(); }
+  }
+  state.drag=null; panning=false; canvas.classList.remove('dragging'); draw();
+});
+canvas.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const r=canvas.getBoundingClientRect();
+  const mx=e.clientX-r.left, my=e.clientY-r.top;
+  const before=pixelToHex(mx,my);
+  state.view.scale=Math.max(0.25,Math.min(4,state.view.scale*(e.deltaY<0?1.12:1/1.12)));
+  const bp=hexToPixel(before.q,before.r);
+  state.view.x += mx-bp.x; state.view.y += my-bp.y;
+  draw();
+},{passive:false});
+
+function refreshAfterEdit(){ draw(); updateStats(); updateLegend(); if(state.sel) updateSelPanel(); }
+
+// ---------- 面板 ----------
+function updateSelPanel(){
+  const coord=document.getElementById('selCoord');
+  const ty=document.getElementById('selType'), v=document.getElementById('selValue');
+  const col=document.getElementById('selColor'), clr=document.getElementById('selClearColor');
+  const bc=document.getElementById('btnClearCell'), hint=document.getElementById('selHint');
+  if(!state.sel || !cellOf(state.sel.q,state.sel.r)){
+    coord.textContent='— 未选中 —';
+    [ty,v,col,clr,bc].forEach(el=>el.disabled=true); hint.textContent=''; return;
+  }
+  const c=cellOf(state.sel.q,state.sel.r);
+  coord.textContent=`(${state.sel.q}, ${state.sel.r})`;
+  [ty,v,col,clr,bc].forEach(el=>el.disabled=false);
+  ty.value=typeOf(c);
+  v.value = c.value===null?'':c.value;
+  col.value = (c.color&&c.color.startsWith('#')&&c.color.length===7)?c.color:'#3498db';
+  const t=typeOf(c);
+  if(t==='xuan') hint.textContent='玄机格：采集半径 '+state.coverRad+' 内所有非玄机格（普通/循序/苦功/嫁衣），自身不计资源。';
+  else if(t==='kugong') hint.textContent='苦功格：让相邻6格每格 +2（不给自己脚下加分）。自身会被采集。';
+  else if(t==='jiayi') hint.textContent='嫁衣格：让相邻6格每格 +1（不给自己脚下加分）。自身会被采集。';
+  else if(t==='xunxu'){
+    const cov=coverKeys(c);
+    hint.textContent='循序格：实际分 = 基础+加成 + 邻居中被任一玄机覆盖的格子数。会被采集。';
+  } else {
+    const cov=coverKeys(c); const xk=currentXuanKeys();
+    let n=0; cov.forEach(k=>{ if(xk.includes(k)) n++; });
+    hint.textContent='普通资源格：可被采集。当前被 '+n+' 个玄机格覆盖。';
+  }
+}
+function updateStats(){
+  const xk=currentXuanKeys();
+  const st=computeAll(xk);
+  document.getElementById('grandTotal').textContent=st.total;
+  // 玄机格明细
+  const xl=document.getElementById('xgList');
+  if(!st.perXuan.length){ xl.innerHTML='<div class="hint">尚无玄机格。</div>'; }
+  else xl.innerHTML=st.perXuan.map(o=>`<div class="xg-item"><span class="c">玄机 (${o.q}, ${o.r})</span><span class="n">采集 +${o.gathered}</span></div>`).join('');
+  // 被采集格明细
+  const gl=document.getElementById('gatherList');
+  if(!st.gathered.length){ gl.innerHTML='<div class="hint">无被采集格（设玄机格或给普通格加资源）。</div>'; }
+  else gl.innerHTML=st.gathered.slice().sort((a,b)=>b.contrib-a.contrib).map(s=>
+    `<div class="gather-row"><span>(${s.cell.q},${s.cell.r}) ${s.type==='xunxu'?'循序':'普通'} 基础${s.base} 实际${s.real} ×${s.count}</span><span class="contrib">+${s.contrib}</span></div>`).join('');
+}
+function activeColors(){ const s=new Set(); for(const c of state.cells.values()) if(c.color) s.add(c.color); return [...s]; }
+function activeTags(){ const s=new Set(); for(const c of state.cells.values()) if(c.tag && typeOf(c)==='plain') s.add(c.tag); return [...s]; }
+function updateLegend(){
+  const lc=document.getElementById('legendColor');
+  const cols=activeColors();
+  lc.innerHTML = cols.length? cols.map(h=>{
+    const cnt=[...state.cells.values()].filter(c=>c.color===h).length;
+    return `<div class="legendRow"><div class="sw" style="background:${h}"></div>
+      <span class="hx">${h}</span>
+      <input data-lc="${h}" value="${escapeHTML(state.legendColor.get(h)||'')}" placeholder="含义">
+      <span class="mono" style="color:var(--dim);font-size:11px">${cnt}格</span></div>`;
+  }).join('') : '<div class="hint">暂无已涂色格子。</div>';
+  const lt=document.getElementById('legendTag');
+  const tags=activeTags();
+  lt.innerHTML = tags.length? tags.map(tg=>{
+    return `<div class="legendRow"><span class="tg">${escapeHTML(tg)}</span>
+      <input data-lt="${tg}" value="${escapeHTML(state.legendTag.get(tg)||'')}" placeholder="含义"></div>`;
+  }).join('') : '<div class="hint">暂无其它标签。</div>';
+  lc.querySelectorAll('input[data-lc]').forEach(i=> i.oninput=()=>state.legendColor.set(i.dataset.lc, i.value));
+  lt.querySelectorAll('input[data-lt]').forEach(i=> i.oninput=()=>state.legendTag.set(i.dataset.lt, i.value));
+}
+function escapeHTML(s){ return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// ---------- HexMap 导出/导入 ----------
+// 归一化：标签含数字且无显式 value 时，把数字提为 value，标签收敛为类型字
+function normalizeTagValue(value, tag){
+  let v=value, t=tag||null;
+  if(v===null && t){
+    const m=t.match(/(\d+)\s*$/);
+    if(m){ v=Number(m[1]); t=t.replace(/[_\-\d]+\s*$/,'').trim(); }
+  }
+  if(t){
+    if(t.includes('玄')) t='玄';
+    else if(t.includes('苦')) t='苦';
+    else if(t.includes('嫁')) t='嫁';
+    else if(t.includes('循')||t.includes('序')) t='循';
+  }
+  return {value:v, tag:(t||null)};
+}
+function exportHexMap(){
+  let s='HEXMAP v2\n';
+  s+=`# 导出 ${new Date().toLocaleString()}\n`;
+  s+=`MAP R ${state.hexR}\nCOVER ${state.coverRad}\n`;
+  const cols=activeColors();
+  if(cols.length){ s+='\n# ── 图例 ──\n'; for(const h of cols){ s+=`LEGEND C ${h} ${state.legendColor.get(h)||'(未命名)'}\n`; } }
+  // 按类型+颜色分组输出
+  const groups=new Map();
+  for(const c of state.cells.values()){
+    if(c.color===null && c.value===null && !c.tag) continue;
+    const ty=typeOf(c);
+    const gkey = ty+'|'+(c.color||'');
+    if(!groups.has(gkey)) groups.set(gkey,[]);
+    groups.get(gkey).push(c);
+  }
+  function tok(c){
+    let t=`(${c.q},${c.r})`;
+    const ty=typeOf(c);
+    if(c.value!==null) t+='='+c.value;
+    if(ty!=='plain') t+=':'+(tagForType(ty));
+    return t;
+  }
+  s+='\n# ── 格子 ──\n';
+  const tyName={xuan:'玄机',kugong:'苦功',jiayi:'嫁衣',xunxu:'循序',plain:'普通'};
+  for(const [gk,arr] of groups){
+    const [ty,col]=gkey.split('|');
+    const desc = ty==='plain' ? (col&&state.legendColor.get(col)?`  # ${state.legendColor.get(col)}`:'')
+                              : `  # ${tyName[ty]}${col?`/${state.legendColor.get(col)||''}`:''}`;
+    s += (col?('COLOR '+col):'PLAIN') + desc + '\n';
+    s += wrap(arr.map(tok))+'\n';
+  }
+  s+='END\n';
+  return s.replace(/^PLAIN  # 普通\n/gm,''); // 清理空普通组头(若全是无值)
+  function wrap(toks){ const lines=[]; let line='';
+    for(const t of toks){ if((line+' '+t).length>72){ lines.push(line); line=t; } else line=line?line+' '+t:t; }
+    if(line)lines.push(line); return lines.join('\n'); }
+}
+function applyHexMap(text){
+  const lines=text.split(/\r?\n/);
+  let mapR=state.hexR, cover=state.coverRad;
+  const patches=[]; const lc=new Map(), lt=new Map();
+  let curColor=null;
+  for(let raw of lines){
+    let line=raw.trim();
+    if(!line||line.startsWith('#')) continue;
+    const up=line.toUpperCase();
+    if(up.startsWith('HEXMAP')) continue;
+    if(up.startsWith('END')) break;
+    if(up.startsWith('MAP')){ const p=line.split(/\s+/); mapR=Math.max(1,parseInt(p[2]||p[1]||5)||5); continue; }
+    if(up.startsWith('COVER')){ cover=Math.max(1,parseInt(line.split(/\s+/)[1])||3); continue; }
+    if(up.startsWith('LEGEND')){ const m=line.match(/^LEGEND\s+([CT])\s+(\S+)\s+(.*)$/i); if(m){ if(m[1].toUpperCase()==='C') lc.set(m[2].toLowerCase(),m[3]); else lt.set(m[2],m[3]); } continue; }
+    if(up.startsWith('COLOR')){ curColor=line.split(/\s+/)[1].toLowerCase(); continue; }
+    if(up.startsWith('PLAIN')){ curColor=null; continue; }
+    const re=/\(\s*(-?\d+)\s*,\s*(-?\d+)\s*\)(?:=([^:\s]+))?(?::([^\s]+))?/g;
+    let m;
+    while((m=re.exec(line))){
+      const nv=normalizeTagValue(m[3]!==undefined?Number(m[3]):null, m[4]||null);
+      patches.push({q:+m[1],r:+m[2],value:nv.value,color:curColor,tag:nv.tag});
+    }
+  }
+  state.hexR=mapR; state.coverRad=cover;
+  document.getElementById('mapR').value=mapR;
+  document.getElementById('coverRad').value=cover;
+  rebuildMap(false);
+  for(const p of patches){
+    if(!state.cells.has(key(p.q,p.r))) continue;
+    const c=ensureCell(p.q,p.r);
+    c.value=p.value; c.color=p.color; c.tag=p.tag;
+  }
+  state.legendColor=lc; state.legendTag=lt;
+  refreshAfterEdit(); fitView();
+}
+
+// ---------- UI 绑定 ----------
+function updateAll(){ updateSelPanel(); updateStats(); updateLegend(); draw(); }
+
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active');
+  document.querySelectorAll('.pane').forEach(p=>p.classList.add('hidden'));
+  document.getElementById('pane-'+b.dataset.tab).classList.remove('hidden');
+  if(b.dataset.tab==='plan') updateStats();
+  if(b.dataset.tab==='legend') updateLegend();
+  if(b.dataset.tab==='help') document.getElementById('helpBody').innerHTML=HELP_HTML;
+});
+document.querySelectorAll('input[name="tool"]').forEach(r=>r.addEventListener('change',e=>{
+  state.tool=e.target.value;
+  canvas.className = state.tool==='select'?'sel':'';
+  canvas.classList.remove('dragging');
+}));
+function buildPalette(){
+  const p=document.getElementById('palette');
+  p.innerHTML='';
+  PALETTE.forEach(h=>{
+    const d=document.createElement('div'); d.className='sw'+(h===state.curColor?' sel':'');
+    d.style.background=h; d.title=h;
+    d.onclick=()=>{ state.curColor=h; document.getElementById('curColorPick').value=h; buildPalette(); };
+    p.appendChild(d);
+  });
+}
+document.getElementById('curColorPick').oninput=e=>{ state.curColor=e.target.value; buildPalette(); };
+document.getElementById('curValue').oninput=e=>{ state.curValue=e.target.value; };
+
+document.getElementById('selType').onchange=e=>{ if(!state.sel)return; const c=cellOf(state.sel.q,state.sel.r); c.tag=tagForType(e.target.value); refreshAfterEdit(); };
+document.getElementById('selValue').oninput=e=>{ if(!state.sel)return; const c=cellOf(state.sel.q,state.sel.r); c.value=e.target.value===''?null:Number(e.target.value); refreshAfterEdit(); };
+document.getElementById('selColor').oninput=e=>{ if(!state.sel)return; const c=cellOf(state.sel.q,state.sel.r); c.color=e.target.value; refreshAfterEdit(); };
+document.getElementById('selClearColor').onclick=()=>{ if(!state.sel)return; cellOf(state.sel.q,state.sel.r).color=null; refreshAfterEdit(); };
+document.getElementById('btnClearCell').onclick=()=>{ if(!state.sel)return; const c=cellOf(state.sel.q,state.sel.r); c.color=null;c.value=null;c.tag=null; refreshAfterEdit(); };
+
+document.getElementById('btnRebuild').onclick=()=>{ state.hexR=Math.max(1,+document.getElementById('mapR').value||5); rebuildMap(true); };
+document.getElementById('coverRad').onchange=e=>{ state.coverRad=Math.max(1,+e.target.value||3); refreshAfterEdit(); };
+document.getElementById('defaultResInput')&&(document.getElementById('defaultResInput').oninput=e=>{ state.defaultRes=Math.max(0,+e.target.value||0); refreshAfterEdit(); });
+['optCover','optCoord','optVal','optGrid'].forEach(id=>document.getElementById(id).onchange=draw);
+document.getElementById('btnFit').onclick=fitView;
+document.getElementById('btnClearAll').onclick=()=>{ if(confirm('清空所有格子的颜色/数值/标签？')){ for(const c of state.cells.values()){c.color=null;c.value=null;c.tag=null;} refreshAfterEdit(); } };
+
+function runSolver(seedOverride){
+  const hint=document.getElementById('solveHint');
+  hint.innerHTML='求解中…（可能卡顿几秒）';
+  state.defaultRes=Math.max(0,+document.getElementById('defaultResInput').value||0);
+  // 组件池：只摆特殊格（玄/苦/嫁/循）。资源作为背景=defaultRes，不参与摆布
+  const pool={
+    xuan:Math.max(0,+document.getElementById('cntXuan').value||0),
+    kugong:Math.max(0,+document.getElementById('cntKugong').value||0),
+    jiayi:Math.max(0,+document.getElementById('cntJiayi').value||0),
+    xunxu:Math.max(0,+document.getElementById('cntXunxu').value||0),
+    resources:[],
+  };
+  const iters=Math.max(1000,+document.getElementById('solveIters').value||30000);
+  let seed=+document.getElementById('solveSeed').value||1;
+  if(seedOverride!==undefined) seed=seedOverride;
+  // 关键：求解前先清空所有特殊格，消除上一轮残留干扰（资源背景由 defaultRes 提供）
+  for(const c of state.cells.values()){ c.tag=null; c.value=null; }
+  // fixed 为空：全部空位都交给求解器分配
+  const fixed=[];
+  setTimeout(()=>{
+    const r=solvePlacement(pool,fixed,iters,seed);
+    if(r.msg){ hint.textContent=r.msg; return; }
+    // 写回：只放置特殊格，资源保持背景(defaultRes，即 value=null)
+    for(const p of r.placement){
+      const c=ensureCell(p.q,p.r);
+      c.tag=tagForType(p.type);
+    }
+    refreshAfterEdit();
+    const cnt={xuan:0,kugong:0,jiayi:0,xunxu:0};
+    for(const p of r.placement) cnt[p.type]=(cnt[p.type]||0)+1;
+    // 存最近一次求解结果，供导出
+    state.lastSolve={pool:{...pool},iters,seed,total:r.total,placement:r.placement.map(p=>({q:p.q,r:p.r,type:p.type})),hexR:state.hexR,coverRad:state.coverRad,defaultRes:state.defaultRes};
+    hint.innerHTML=`求解完成（迭代 ${iters}，种子 ${seed}）。<b style="color:var(--gold)">总分 ${r.total}</b><br>`+
+      `摆布：玄机${cnt.xuan} 苦功${cnt.kugong} 嫁衣${cnt.jiayi} 循序${cnt.xunxu}（背景资源每格=${state.defaultRes}）`;
+  },20);
+}
+document.getElementById('btnSolve').onclick=()=>runSolver();
+document.getElementById('btnSolveAgain').onclick=()=>{
+  const s=(+document.getElementById('solveSeed').value||1)+1;
+  document.getElementById('solveSeed').value=s; runSolver(s);
+};
+document.getElementById('btnExportSolve').onclick=()=>{
+  const hint=document.getElementById('solveHint');
+  if(!state.lastSolve){ hint.innerHTML='请先点「求最优摆布」再导出。'; return; }
+  const L=state.lastSolve;
+  const byType={xuan:[],kugong:[],jiayi:[],xunxu:[]};
+  for(const p of L.placement) if(byType[p.type]) byType[p.type].push(`(${p.q},${p.r})`);
+  const text=`# ===== 规划结果（可贴给AI复核）=====
+# 地图: 半径${L.hexR}  玄机覆盖半径${L.coverRad}  背景资源=${L.defaultRes}
+# 组件池: 玄机×${L.pool.xuan} 苦功×${L.pool.kugong} 嫁衣×${L.pool.jiayi} 循序×${L.pool.xunxu}
+# 求解参数: 迭代${L.iters} 种子${L.seed}
+# 求解器报告总分: ${L.total}
+RESULT ${L.total}
+MAP R ${L.hexR}
+COVER ${L.coverRad}
+BGRES ${L.defaultRes}
+POOL XUAN ${L.pool.xuan} KUGONG ${L.pool.kugong} JIAYI ${L.pool.jiayi} XUNXU ${L.pool.xunxu}
+XUAN ${byType.xuan.join(' ')}
+KUGONG ${byType.kugong.join(' ')}
+JIAYI ${byType.jiayi.join(' ')}
+XUNXU ${byType.xunxu.join(' ')}
+# ===== 粘贴上面内容给AI，请AI验算总分是否正确 =====`;
+  // 同时写入数据页的文本框，并尝试复制
+  const io=document.getElementById('ioText'); if(io) io.value=text;
+  try{ const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); hint.innerHTML='已复制到剪贴板，也写入了「数据」页文本框。<br>贴给AI时请一并说明背景资源默认=1。'; }
+  catch(e){ hint.innerHTML='已写入「数据」页文本框，请手动复制。'; }
+};
+
+document.getElementById('btnExport').onclick=()=>{ document.getElementById('ioText').value=exportHexMap(); };
+document.getElementById('btnApply').onclick=()=>{ const t=document.getElementById('ioText').value; if(t.trim()) applyHexMap(t); };
+document.getElementById('btnExportJSON').onclick=()=>{
+  const data={hexR:state.hexR,coverRad:state.coverRad,
+    legendColor:[...state.legendColor.entries()],legendTag:[...state.legendTag.entries()],
+    cells:[...state.cells.values()].filter(c=>c.color||c.value!==null||c.tag).map(c=>[c.q,c.r,c.value,c.color,c.tag])};
+  document.getElementById('jsonText').value=JSON.stringify(data,null,2);
+};
+document.getElementById('btnImportJSON').onclick=()=>{
+  try{
+    const d=JSON.parse(document.getElementById('jsonText').value);
+    state.hexR=d.hexR||5; state.coverRad=d.coverRad||3;
+    document.getElementById('mapR').value=state.hexR;
+    document.getElementById('coverRad').value=state.coverRad;
+    rebuildMap(false);
+    state.legendColor=new Map(d.legendColor||[]); state.legendTag=new Map(d.legendTag||[]);
+    (d.cells||[]).forEach(([q,r,v,col,tg])=>{ if(state.cells.has(key(q,r))){ const c=ensureCell(q,r); c.value=(v==null?null:v); c.color=col||null; c.tag=tg||null; } });
+    refreshAfterEdit(); fitView();
+  }catch(err){ alert('JSON 解析失败：'+err.message); }
+};
+document.getElementById('btnCopyJSON').onclick=()=>{ const t=document.getElementById('jsonText'); t.select(); document.execCommand('copy'); };
+window.addEventListener('resize',resize);
+
+// ---------- 说明 ----------
+const HELP_HTML=`
+<h3 class="help">四种格子与规则</h3>
+<table class="help">
+<tr><th>类型</th><th>标签</th><th>作用</th><th>是否被采集</th></tr>
+<tr><td>普通资源格</td><td>（无）</td><td>有基础资源值</td><td>是</td></tr>
+<tr><td>玄机格 ✦</td><td><code>玄</code></td><td>采集半径 R(默认3) 内所有非玄机格</td><td>否（自身不计）</td></tr>
+<tr><td>苦功格 ⚒</td><td><code>苦</code></td><td>相邻6格每格 <b>+2</b>（不给自己脚下加）</td><td>是</td></tr>
+<tr><td>嫁衣格 ◕</td><td><code>嫁</code></td><td>相邻6格每格 <b>+1</b>（不给自己脚下加）</td><td>是</td></tr>
+<tr><td>循序格 ↻</td><td><code>循/序</code></td><td>实际分 += 邻居中被任一玄机覆盖的格子数</td><td>是</td></tr>
+</table>
+
+<h3 class="help">实际分数</h3>
+<p class="help">
+对任意<b>非玄机格</b>：<br>
+实际分 = 基础值 + 2×相邻苦功数 + 1×相邻嫁衣数<br>
+若是<b>循序格</b>，再 + (邻居中被任一玄机格覆盖的格子数，不计玄机邻居、不重复)。
+</p>
+
+<h3 class="help">总分</h3>
+<p class="help">总分 = Σ [ 被采集格(普通+循序) 的<b>实际分</b> × 它被几个玄机格覆盖 ]</p>
+<p class="help">即：同一格被两个玄机覆盖，按两份计。</p>
+
+<h3 class="help">标签与数值写法</h3>
+<p class="help">导出格式：<code>(q,r)=数值:标签</code>。例：<code>(0,-2)=2:循</code> 表示基础值2的循序格。<br>
+兼容你此前的写法 <code>循序2</code>、<code>苦功_1</code>、<code>嫁衣_1</code> —— 导入时<b>末尾数字会被当作资源值</b>，标签收敛为类型字。</p>
+
+<h3 class="help">HexMap 文本示例</h3>
+<pre class="formula">HEXMAP v2
+MAP R 5
+COVER 3
+
+COLOR #ffd25a  # 玄机格
+(0,0):玄 (1,-2):玄 (3,-1):玄
+COLOR #d96b1f  # 苦功格
+(0,-3)=1:苦
+COLOR #8e44ad  # 嫁衣格
+(0,-2)=1:嫁
+COLOR #16a085  # 循序格
+(0,-2)=2:循
+PLAIN
+(-2,0)=2 (1,-2)=1
+END</pre>
+
+<h3 class="help">两种用法</h3>
+<p class="help">
+<b>① 已知固定布局</b>（地图特殊格/资源位置已定，只调玄机）：把地图标好 → 直接看「规划」页总分。<br>
+<b>② 自由排布</b>（一局给你一堆组件，全要摆）：地图留空或只标"锁死不动"的格子 → 在「自动排布」填组件池（玄机/苦功/嫁衣/循序数量 + 资源数值列表）→ 求解器自动摆到最优位。
+</p>
+<p class="help"><b>关于"固定项"</b>：地图上<b>已标注</b>的格子（特殊格或带数字的资源格）会被求解器视为<b>锁死不动</b>；未标注的空位才参与分配。想让求解器自由分配资源，就把数值填进"资源数值"框、地图上别标。</p>
+
+<h3 class="help">协作流程</h3>
+<ol class="help">
+<li>用类型工具标出地图上<b>固定不动</b>的元素（或留空）。</li>
+<li>在「自动排布」填这局的组件池，点「求最优摆布」。</li>
+<li>求解器把结果画到地图上，「规划」页验证总分与采集明细。</li>
+<li>「数据」页导出 HexMap 文本发给 AI 复核，或贴回方案验证。</li>
+</ol>
+<p class="help" style="margin-top:10px;color:var(--accent)">模拟退火是近似算法：若结果不理想，点「↻ 再试(换种子)」多跑几次取最优；或加大迭代次数。</p>
+<p class="help" style="color:var(--accent)">遇到新元素：用新颜色/标签标出来，图例写清含义与规则，导出即可。</p>`;
+
+// ---------- 初始化 ----------
+function init(){
+  buildPalette();
+  rebuildMap(false);
+  // 示例：例2的数据
+  const ex={ '0,-4':{value:1}, '0,-3':{tag:'苦功_1'}, '0,-2':{tag:'嫁衣_1'}, '0,-1':{value:3}, '0,0':{tag:'玄'}, '1,-3':{value:2} };
+  for(const [k,v] of Object.entries(ex)){
+    const [q,r]=k.split(',').map(Number);
+    if(state.cells.has(key(q,r))){ const c=ensureCell(q,r); Object.assign(c,v); }
+  }
+  resize(); fitView(); updateAll();
+}
+init();
+</script>
+</body>
+</html>
