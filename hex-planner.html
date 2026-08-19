@@ -132,6 +132,7 @@
         <label><input type="radio" name="tool" value="paint"><span>🖌 涂色</span></label>
         <label><input type="radio" name="tool" value="value"><span>🔢 数值</span></label>
         <label><input type="radio" name="tool" value="erase"><span>⌫ 擦除</span></label>
+        <label><input type="radio" name="tool" value="move"><span>✥ 移动</span></label>
       </div>
       <div class="row">
         <button class="btn grow" id="btnUndo" disabled title="Ctrl+Z">↶ 撤销</button>
@@ -199,6 +200,9 @@
       <div class="row">
         <button class="btn grow" id="btnFit">居中适配</button>
         <button class="btn grow" id="btnRotate">↻ 旋转60°</button>
+      </div>
+      <div class="row">
+        <button class="btn grow" id="btnCenterContent">⌖ 内容居中</button>
         <button class="btn grow" id="btnClearAll">清空全部</button>
       </div>
     </div>
@@ -279,6 +283,12 @@
       </div>
       <textarea id="jsonText" placeholder="完整数据备份..."></textarea>
 
+      <h3>图像导出</h3>
+      <div class="row">
+        <button class="btn primary grow" id="btnExportPNG">🖼 导出 PNG 图片</button>
+      </div>
+      <div class="hint">按画布当前显示选项（覆盖/数值/网格线/坐标）渲染，自动裁剪到内容范围，底部附图例，可直接发群/存档。</div>
+
       <h3>链接分享（自动保存）</h3>
       <div class="hint">编辑内容会自动保存到浏览器地址栏，刷新/收藏不丢。点下面按钮生成含当前地图的链接，发给他人打开即是同一张图。</div>
       <div class="row">
@@ -335,6 +345,7 @@ const state = {
   curColor: '#3498db',
   curValue: '',
   drag: null,
+  moveGhost: null,   // 移动预览中将被丢弃的越界格
 };
 
 const key = (q,r)=> q+','+r;
@@ -429,13 +440,13 @@ function resize(){
   ctx.setTransform(dpr,0,0,dpr,0,0);
   draw();
 }
-function drawHex(cx,cy,size,fill,stroke,lw){
-  ctx.beginPath();
+function drawHex(g,cx,cy,size,fill,stroke,lw){
+  g.beginPath();
   const pts=hexCorners(cx,cy,size);
-  pts.forEach((p,i)=> i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));
-  ctx.closePath();
-  if(fill){ctx.fillStyle=fill;ctx.fill();}
-  if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=lw;ctx.stroke();}
+  pts.forEach((p,i)=> i?g.lineTo(p[0],p[1]):g.moveTo(p[0],p[1]));
+  g.closePath();
+  if(fill){g.fillStyle=fill;g.fill();}
+  if(stroke){g.strokeStyle=stroke;g.lineWidth=lw;g.stroke();}
 }
 function heatColor(v){
   const t=Math.min(1, v/120);
@@ -452,6 +463,76 @@ function lighten(color, dl){
   }
   return color;
 }
+// 场景渲染（画布与 PNG 导出共用）：g=画布上下文, o=显示选项, toPix=坐标→像素, size=六边形边长
+function renderScene(g,o,toPix,size,sel){
+  // 覆盖集
+  let coverSet=new Set();
+  if(o.cover){
+    for(const c of state.cells.values()){
+      if(typeOf(c)==='xuan') for(const ck of coverKeys(c)) coverSet.add(ck);
+    }
+  }
+  // 填充
+  for(const c of state.cells.values()){
+    const p=toPix(c.q,c.r);
+    const ty=typeOf(c);
+    const st=TYPE_STYLE[ty];
+    const inCover = coverSet.has(key(c.q,c.r));
+    let fill='#2b3252';
+    if(st) fill=st.fill;
+    else if(c.color) fill=c.color;
+    else if(c.value!==null) fill=heatColor(c.value);
+    if(inCover && ty!=='xuan') fill=lighten(fill,0.16);
+    drawHex(g,p.x,p.y,size, fill, o.grid?'#3a4270':'#2f3656', o.grid?1.1:0.8);
+  }
+  // 覆盖蓝边
+  if(o.cover){
+    for(const ck of coverSet){
+      const c=state.cells.get(ck); if(!c||typeOf(c)==='xuan') continue;
+      const p=toPix(c.q,c.r);
+      drawHex(g,p.x,p.y,size, null, 'rgba(124,196,255,.6)', 1.3);
+    }
+  }
+  // 类型边框
+  for(const c of state.cells.values()){
+    const ty=typeOf(c); const st=TYPE_STYLE[ty]; if(!st) continue;
+    const p=toPix(c.q,c.r);
+    drawHex(g,p.x,p.y,size, null, st.edge, 2.3);
+  }
+  // 文字
+  g.textAlign='center'; g.textBaseline='middle';
+  for(const c of state.cells.values()){
+    const p=toPix(c.q,c.r);
+    const ty=typeOf(c); const st=TYPE_STYLE[ty];
+    if(st){
+      g.fillStyle=st.textColor; g.font='bold '+(size*0.5)+'px sans-serif';
+      g.fillText(st.text, p.x, p.y - (o.val&&c.value!==null?size*0.16:0));
+      if(o.val && c.value!==null){
+        g.font='bold '+(size*0.3)+'px sans-serif';
+        g.fillText(c.value, p.x, p.y+size*0.36);
+      }
+    } else {
+      if(o.val && c.value!==null){
+        g.fillStyle='#fff'; g.font='bold '+(size*0.46)+'px sans-serif';
+        g.fillText(c.value, p.x, p.y);
+      }
+      if(c.tag){
+        g.fillStyle='#ffe890'; g.font='bold '+(size*0.3)+'px sans-serif';
+        g.fillText(c.tag, p.x, p.y+size*0.34);
+      }
+    }
+    if(o.coord && size>20){
+      g.fillStyle='rgba(230,233,245,.45)';
+      g.font=(size*0.22)+'px ui-monospace,Consolas,monospace';
+      g.fillText(`${c.q},${c.r}`, p.x, p.y+size*0.58);
+    }
+  }
+  // 选中
+  if(sel && state.cells.has(key(sel.q,sel.r))){
+    const p=toPix(sel.q,sel.r);
+    drawHex(g,p.x,p.y,size, null, '#7cc4ff', 3);
+  }
+}
 function draw(){
   ctx.clearRect(0,0,canvas.clientWidth,canvas.clientHeight);
   const o={
@@ -461,74 +542,20 @@ function draw(){
     grid:document.getElementById('optGrid').checked,
   };
   const size=state.hexSize*state.view.scale;
-
-  // 覆盖集
-  let coverSet=new Set();
-  if(o.cover){
-    for(const c of state.cells.values()){
-      if(typeOf(c)==='xuan') for(const ck of coverKeys(c)) coverSet.add(ck);
-    }
-  }
-
-  // 填充
-  for(const c of state.cells.values()){
-    const p=hexToPixel(c.q,c.r);
-    const ty=typeOf(c);
-    const st=TYPE_STYLE[ty];
-    const inCover = coverSet.has(key(c.q,c.r));
-    let fill='#2b3252';
-    if(st) fill=st.fill;
-    else if(c.color) fill=c.color;
-    else if(c.value!==null) fill=heatColor(c.value);
-    if(inCover && ty!=='xuan') fill=lighten(fill,0.16);
-    drawHex(p.x,p.y,size, fill, o.grid?'#3a4270':'#2f3656', o.grid?1.1:0.8);
-  }
-  // 覆盖蓝边
-  if(o.cover){
-    for(const ck of coverSet){
-      const c=state.cells.get(ck); if(!c||typeOf(c)==='xuan') continue;
-      const p=hexToPixel(c.q,c.r);
-      drawHex(p.x,p.y,size, null, 'rgba(124,196,255,.6)', 1.3);
-    }
-  }
-  // 类型边框
-  for(const c of state.cells.values()){
-    const ty=typeOf(c); const st=TYPE_STYLE[ty]; if(!st) continue;
-    const p=hexToPixel(c.q,c.r);
-    drawHex(p.x,p.y,size, null, st.edge, 2.3);
-  }
-  // 文字
-  ctx.textAlign='center'; ctx.textBaseline='middle';
-  for(const c of state.cells.values()){
-    const p=hexToPixel(c.q,c.r);
-    const ty=typeOf(c); const st=TYPE_STYLE[ty];
-    if(st){
-      ctx.fillStyle=st.textColor; ctx.font='bold '+(size*0.5)+'px sans-serif';
-      ctx.fillText(st.text, p.x, p.y - (o.val&&c.value!==null?size*0.16:0));
-      if(o.val && c.value!==null){
-        ctx.font='bold '+(size*0.3)+'px sans-serif';
-        ctx.fillText(c.value, p.x, p.y+size*0.36);
-      }
-    } else {
-      if(o.val && c.value!==null){
-        ctx.fillStyle='#fff'; ctx.font='bold '+(size*0.46)+'px sans-serif';
-        ctx.fillText(c.value, p.x, p.y);
-      }
-      if(c.tag){
-        ctx.fillStyle='#ffe890'; ctx.font='bold '+(size*0.3)+'px sans-serif';
-        ctx.fillText(c.tag, p.x, p.y+size*0.34);
+  renderScene(ctx,o,hexToPixel,size,state.sel);
+  // 移动工具预览：将移出边界的格半透明画在目标位置
+  if(state.moveGhost && moveDrag){
+    ctx.save(); ctx.globalAlpha=.35;
+    for(const s of state.moveGhost){
+      const p=hexToPixel(s.q+moveDrag.dq, s.r+moveDrag.dr);
+      const ty=typeOf(s); const st=TYPE_STYLE[ty];
+      drawHex(ctx,p.x,p.y,size, st?st.fill:(s.color||'#2b3252'), '#3a4270', 1);
+      if(st){
+        ctx.fillStyle=st.textColor; ctx.font='bold '+(size*0.5)+'px sans-serif';
+        ctx.fillText(st.text, p.x, p.y);
       }
     }
-    if(o.coord && size>20){
-      ctx.fillStyle='rgba(230,233,245,.45)';
-      ctx.font=(size*0.22)+'px ui-monospace,Consolas,monospace';
-      ctx.fillText(`${c.q},${c.r}`, p.x, p.y+size*0.58);
-    }
-  }
-  // 选中
-  if(state.sel && state.cells.has(key(state.sel.q,state.sel.r))){
-    const p=hexToPixel(state.sel.q,state.sel.r);
-    drawHex(p.x,p.y,size, null, '#7cc4ff', 3);
+    ctx.restore();
   }
   document.getElementById('hudZoom').textContent=Math.round(state.view.scale*100)+'%';
 }
@@ -948,6 +975,54 @@ canvas.addEventListener('contextmenu',e=>e.preventDefault());
 const pointers=new Map();   // pointerId -> {x,y}，当前按下的指针
 let pinch=null;             // 双指捏合/平移状态
 let moved=false, drawBatch=false;
+let moveDrag=null;   // 移动工具状态：{start:{q,r}, dq, dr, snap:[非空格快照]}
+
+// ---------- 整图内容平移 ----------
+function contentSnap(){
+  const a=[];
+  for(const c of state.cells.values())
+    if(c.color!==null||c.value!==null||c.tag!==null) a.push({q:c.q,r:c.r,color:c.color,value:c.value,tag:c.tag});
+  return a;
+}
+// 把非空内容整体搬到 (dq,dr)，越界格丢弃；返回丢弃数
+function shiftMapContent(dq,dr){
+  const snap=contentSnap();
+  for(const c of state.cells.values()){c.color=null;c.value=null;c.tag=null;}
+  let dropped=0;
+  for(const s of snap){
+    const nc=state.cells.get(key(s.q+dq,s.r+dr));
+    if(nc){nc.color=s.color;nc.value=s.value;nc.tag=s.tag;} else dropped++;
+  }
+  return dropped;
+}
+// 移动预览：实时平移内容，越界格记入 state.moveGhost（draw 以半透明画在目标位置）
+function applyMovePreview(dq,dr){
+  for(const c of state.cells.values()){c.color=null;c.value=null;c.tag=null;}
+  const ghost=[];
+  for(const s of moveDrag.snap){
+    const nc=state.cells.get(key(s.q+dq,s.r+dr));
+    if(nc){nc.color=s.color;nc.value=s.value;nc.tag=s.tag;} else ghost.push(s);
+  }
+  state.moveGhost=ghost.length?ghost:null;
+}
+function cancelMoveDrag(){
+  if(!moveDrag) return;
+  applyMovePreview(0,0);
+  moveDrag=null; state.moveGhost=null; draw();
+}
+// 一键内容居中：非空格质心 → (0,0)
+function centerMapContent(){
+  let n=0,sq=0,sr=0;
+  for(const c of state.cells.values()){
+    if(c.color!==null||c.value!==null||c.tag!==null){n++;sq+=c.q;sr+=c.r;}
+  }
+  if(!n){ toastMsg('地图上还没有内容'); return; }
+  const dq=-Math.round(sq/n), dr=-Math.round(sr/n);
+  if(dq===0&&dr===0){ toastMsg('内容已经在地图中心'); return; }
+  const dropped=shiftMapContent(dq,dr);
+  refreshAfterEdit();
+  toastMsg(dropped>0?`已居中：<b>${dropped}</b> 个格子超出边界被丢弃（Ctrl+Z 可撤销）`:'已居中');
+}
 function evHex(e){ const r=canvas.getBoundingClientRect(); return pixelToHex(e.clientX-r.left, e.clientY-r.top); }
 function endStroke(){ if(drawBatch){ drawBatch=false; pushHistory(); } }  // 整条笔画=一次撤销
 canvas.addEventListener('pointerdown',e=>{
@@ -955,10 +1030,15 @@ canvas.addEventListener('pointerdown',e=>{
   canvas.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
   moved=false;
-  if(pointers.size===2){ state.drag=null; endStroke(); startPinch(); return; } // 双指手势取代单指绘制
+  if(pointers.size===2){ state.drag=null; endStroke(); cancelMoveDrag(); startPinch(); return; } // 双指手势取代单指绘制
   if(e.button===2 || e.button===1 || state.tool==='select'){
     state.drag={x:e.clientX,y:e.clientY,vx:state.view.x,vy:state.view.y,pan:true};
     canvas.classList.add('dragging'); return;
+  }
+  if(state.tool==='move'){
+    moveDrag={start:evHex(e), dq:0, dr:0, snap:contentSnap()};
+    canvas.classList.add('dragging');
+    return;
   }
   const h=evHex(e);
   if(state.cells.has(key(h.q,h.r))){
@@ -995,6 +1075,15 @@ canvas.addEventListener('pointermove',e=>{
     state.view.y=pinch.cy0-(pinch.cy0-pinch.vy0)*k/pinch.scale0+(cy-pinch.cy0);
     draw(); return;
   }
+  if(moveDrag){
+    const dq=h.q-moveDrag.start.q, dr=h.r-moveDrag.start.r;
+    if(dq!==moveDrag.dq||dr!==moveDrag.dr){
+      moveDrag.dq=dq; moveDrag.dr=dr;
+      applyMovePreview(dq,dr);
+      draw(); updateStats();
+    }
+    return;
+  }
   if(state.drag){
     if(state.drag.pan){
       const dx=e.clientX-state.drag.x, dy=e.clientY-state.drag.y;
@@ -1015,6 +1104,15 @@ function endPointer(e){
   pointers.delete(e.pointerId);
   if(pinch && pointers.size<2){ pinch=null; state.drag=null; }
   if(pointers.size===0){
+    if(moveDrag){
+      const didMove=moveDrag.dq!==0||moveDrag.dr!==0;
+      const dropped=state.moveGhost?state.moveGhost.length:0;
+      moveDrag=null; state.moveGhost=null;
+      if(didMove){
+        refreshAfterEdit();   // 整次拖动=一次撤销
+        if(dropped>0) toastMsg(`<b>移动完成</b>：${dropped} 个格子超出地图边界被丢弃（Ctrl+Z 可撤销）`);
+      } else draw();
+    }
     if(!moved && state.tool==='select'){   // 未拖动=点选（含触屏轻点）
       const h=evHex(e);
       if(state.cells.has(key(h.q,h.r))){ state.sel={q:h.q,r:h.r}; updateSelPanel(); }
@@ -1237,6 +1335,67 @@ function applyHexMap(text){
   refreshAfterEdit(); fitView();
 }
 
+// ---------- PNG 导出 ----------
+// 按画布当前显示选项渲染整图：自动裁剪到内容范围（无内容则整图），底部附图例
+function exportPNG(){
+  const o={
+    cover:document.getElementById('optCover').checked,
+    coord:document.getElementById('optCoord').checked,
+    val:document.getElementById('optVal').checked,
+    grid:document.getElementById('optGrid').checked,
+  };
+  let cells=[...state.cells.values()].filter(c=>c.color!==null||c.value!==null||c.tag!==null);
+  if(!cells.length) cells=[...state.cells.values()];
+  let minx=1e9,miny=1e9,maxx=-1e9,maxy=-1e9;
+  for(const c of cells){
+    const x=SQ3*c.q+SQ3/2*c.r, y=1.5*c.r;
+    minx=Math.min(minx,x); maxx=Math.max(maxx,x);
+    miny=Math.min(miny,y); maxy=Math.max(maxy,y);
+  }
+  const pad=1.6;
+  const unitW=(maxx-minx)+SQ3+pad*2, unitH=(maxy-miny)+2+pad*2;
+  const scale=Math.max(10,Math.min(52,1500/Math.max(unitW,unitH)));
+  // 图例条目：图内出现的特殊类型 + 已涂色颜色的含义
+  const legend=[];
+  const used=new Set(cells.map(typeOf));
+  const tyName={xuan:'玄机 ✦ 采集周围',kugong:'苦功 ⚒ 邻居+2',jiayi:'嫁衣 ◕ 邻居+1',xunxu:'循序 ↻ +相邻格数'};
+  for(const ty of ['xuan','kugong','jiayi','xunxu'])
+    if(used.has(ty)) legend.push({sw:TYPE_STYLE[ty].fill, label:tyName[ty]});
+  const colCnt=new Map();
+  for(const c of cells) if(c.color) colCnt.set(c.color,(colCnt.get(c.color)||0)+1);
+  for(const [h,n] of colCnt) legend.push({sw:h, label:(state.legendColor.get(h)||('颜色 '+h))+' ×'+n});
+  const legRows=legend.length?Math.ceil(legend.length/2):0;
+  const LEG_H=legRows?legRows*26+16:0;
+  const W=Math.round(unitW*scale), H=Math.round(unitH*scale)+LEG_H;
+  const off=document.createElement('canvas'); off.width=W; off.height=H;
+  const g=off.getContext('2d');
+  const bg=g.createRadialGradient(W/2,(H-LEG_H)/2,10,W/2,(H-LEG_H)/2,Math.max(W,H));
+  bg.addColorStop(0,'#161b2e'); bg.addColorStop(1,'#0c0f1a');
+  g.fillStyle=bg; g.fillRect(0,0,W,H);
+  const ox=W/2-((minx+maxx)/2)*scale, oy=(H-LEG_H)/2-((miny+maxy)/2)*scale;
+  const toPix=(q,r)=>({x:scale*(SQ3*q+SQ3/2*r)+ox, y:scale*1.5*r+oy});
+  renderScene(g,o,toPix,scale,null);
+  if(legend.length){
+    g.textAlign='left'; g.textBaseline='middle';
+    legend.forEach((L,i)=>{
+      const lx=(i%2)*(W/2)+16, ly=H-LEG_H+14+Math.floor(i/2)*26;
+      g.fillStyle=L.sw; g.fillRect(lx,ly-7,16,14);
+      g.strokeStyle='rgba(0,0,0,.5)'; g.lineWidth=1; g.strokeRect(lx+.5,ly-6.5,15,13);
+      g.fillStyle='#e6e9f5'; g.font='13px "Segoe UI","Microsoft YaHei",sans-serif';
+      g.fillText(L.label, lx+24, ly);
+    });
+  }
+  const d=new Date(), p2=n=>String(n).padStart(2,'0');
+  const fname=`六边形规划-${d.getFullYear()}${p2(d.getMonth()+1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}.png`;
+  off.toBlob(b=>{
+    if(!b){ alert('PNG 生成失败'); return; }
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(b); a.download=fname;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+  },'image/png');
+}
+
 // ---------- UI 绑定 ----------
 function updateAll(){ updateSelPanel(); updateStats(); updateLegend(); draw(); }
 
@@ -1251,7 +1410,7 @@ document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
 });
 document.querySelectorAll('input[name="tool"]').forEach(r=>r.addEventListener('change',e=>{
   state.tool=e.target.value;
-  canvas.className = state.tool==='select'?'sel':'';
+  canvas.className = (state.tool==='select'||state.tool==='move')?'sel':'';
   canvas.classList.remove('dragging');
 }));
 function buildPalette(){
@@ -1279,6 +1438,7 @@ document.getElementById('defaultResInput')&&(document.getElementById('defaultRes
 ['optCover','optCoord','optVal','optGrid'].forEach(id=>document.getElementById(id).onchange=draw);
 document.getElementById('btnFit').onclick=fitView;
 document.getElementById('btnRotate').onclick=rotateMap;
+document.getElementById('btnCenterContent').onclick=centerMapContent;
 document.getElementById('btnUndo').onclick=undo;
 document.getElementById('btnRedo').onclick=redo;
 document.getElementById('btnClearAll').onclick=()=>{ if(confirm('清空所有格子的颜色/数值/标签？')){ for(const c of state.cells.values()){c.color=null;c.value=null;c.tag=null;} refreshAfterEdit(); } };
@@ -1391,6 +1551,7 @@ XUNXU ${byType.xunxu.join(' ')}
 };
 
 document.getElementById('btnExport').onclick=()=>{ document.getElementById('ioText').value=exportHexMap(); };
+document.getElementById('btnExportPNG').onclick=exportPNG;
 document.getElementById('btnApply').onclick=()=>{
   const t=document.getElementById('ioText').value;
   if(!t.trim()) return;
@@ -1421,7 +1582,7 @@ document.getElementById('btnCopyJSON').onclick=()=>{ const t=document.getElement
 window.addEventListener('resize',resize);
 
 // ---------- 快捷键 ----------
-const TOOL_KEYS={ '1':'select','2':'paint','3':'value','4':'erase',
+const TOOL_KEYS={ '1':'select','2':'paint','3':'value','4':'erase','5':'move',
   'q':'plain','w':'xuan','e':'kugong','r':'jiayi','t':'xunxu' };
 window.addEventListener('keydown',e=>{
   if(e.ctrlKey||e.metaKey){
@@ -1560,11 +1721,12 @@ END</pre>
 <h3 class="help">快捷键与手势</h3>
 <table class="help">
 <tr><th>操作</th><th>作用</th></tr>
-<tr><td><code>1</code>~<code>4</code></td><td>选择 / 涂色 / 数值 / 擦除</td></tr>
+<tr><td><code>1</code>~<code>5</code></td><td>选择 / 涂色 / 数值 / 擦除 / 移动整图</td></tr>
 <tr><td><code>Q W E R T</code></td><td>普通 / 玄机 / 苦功 / 嫁衣 / 循序</td></tr>
 <tr><td><code>Ctrl+Z</code> / <code>Ctrl+Y</code></td><td>撤销 / 重做（整条拖动笔画=一步）</td></tr>
 <tr><td><code>F</code></td><td>居中适配</td></tr>
 <tr><td><code>Esc</code></td><td>取消选中</td></tr>
+<tr><td>移动工具（<code>5</code>）拖动</td><td>整图内容平移，越界格半透明预览、松手丢弃；「⌖ 内容居中」一键回中</td></tr>
 <tr><td>右键/中键拖动</td><td>平移视图</td></tr>
 <tr><td>触屏单指</td><td>绘制 / 点选</td></tr>
 <tr><td>触屏双指</td><td>捏合缩放 + 平移</td></tr>
@@ -1582,7 +1744,7 @@ END</pre>
 <li>用类型工具标出地图上<b>固定不动</b>的元素（或留空）。</li>
 <li>在「自动排布」填这局的组件池，点「求最优摆布」。</li>
 <li>求解器把结果画到地图上，「规划」页验证总分与采集明细。</li>
-<li>「数据」页导出 HexMap 文本发给 AI 复核，或贴回方案验证。</li>
+<li>「数据」页导出 HexMap 文本发给 AI 复核，或导出 PNG 图片直接分享。</li>
 </ol>
 <p class="help" style="margin-top:10px;color:var(--accent)">模拟退火是近似算法：若结果不理想，点「↻ 再试(换种子)」多跑几次取最优；或加大迭代次数。</p>
 <p class="help" style="color:var(--accent)">遇到新元素：用新颜色/标签标出来，图例写清含义与规则，导出即可。</p>`;
@@ -1591,6 +1753,10 @@ END</pre>
 const toastEl=document.getElementById('toast');
 let demoToastOn=false;
 function hideDemoToast(){ if(demoToastOn){ demoToastOn=false; toastEl.classList.add('hidden'); } }
+function toastMsg(html, ms){
+  toastEl.innerHTML=html; toastEl.classList.remove('hidden');
+  clearTimeout(toastMsg._t); toastMsg._t=setTimeout(()=>toastEl.classList.add('hidden'), ms||3500);
+}
 function init(){
   buildPalette();
   const restored = loadMapFromHash();
