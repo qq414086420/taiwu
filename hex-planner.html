@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>六边形地图标注 · 玄机规划工作台</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpolygon points='50,3 93,27 93,73 50,97 7,73 7,27' fill='%23ffd25a'/%3E%3Ctext x='50' y='66' font-size='46' text-anchor='middle' fill='%233a2a00' font-family='sans-serif'%3E玄%3C/text%3E%3C/svg%3E">
 <style>
   :root{
     --bg:#0f1320; --panel:#171c2e; --panel2:#1f2540; --line:#2c3354;
@@ -15,7 +16,7 @@
     font:14px/1.5 "Segoe UI","Microsoft YaHei",sans-serif}
   #app{display:flex;height:100vh;width:100vw;overflow:hidden}
   #stage{flex:1;position:relative;background:radial-gradient(circle at 50% 40%, #161b2e 0%, #0c0f1a 80%);min-width:0}
-  #cv{display:block;width:100%;height:100%;cursor:crosshair}
+  #cv{display:block;width:100%;height:100%;cursor:crosshair;touch-action:none}
   #cv.sel{cursor:grab}
   #cv.dragging{cursor:grabbing}
   #hud{position:absolute;left:12px;top:12px;background:rgba(15,19,32,.82);
@@ -46,6 +47,7 @@
   button.btn.primary{background:var(--accent);color:#06223f;border-color:var(--accent);font-weight:600}
   button.btn.gold{background:var(--gold);color:#3a2a00;border-color:var(--gold);font-weight:600}
   button.btn.danger:hover{border-color:var(--bad);color:var(--bad)}
+  button.btn:disabled{opacity:.45;cursor:not-allowed}
   .tools{display:grid;grid-template-columns:repeat(auto-fit,minmax(64px,1fr));gap:6px;margin:6px 0}
   .tools label{display:flex;flex-direction:column;align-items:center;gap:3px;background:var(--panel2);
     border:1px solid var(--line);border-radius:6px;padding:7px 2px;cursor:pointer;font-size:12px;color:var(--dim)}
@@ -92,14 +94,25 @@
   .gather-row{display:flex;justify-content:space-between;font-size:11px;padding:3px 8px;
     font-family:ui-monospace,Consolas,monospace;color:var(--dim);border-bottom:1px solid #1d2450}
   .gather-row .contrib{color:var(--good);font-weight:700}
+  .toast{position:absolute;left:12px;bottom:12px;background:rgba(26,37,64,.95);border:1px solid var(--accent);
+    border-radius:8px;padding:9px 14px;font-size:12px;color:var(--txt);cursor:pointer;max-width:70%;
+    box-shadow:0 4px 16px #0008;animation:toastIn .2s ease-out}
+  .toast b{color:var(--gold)}
+  @keyframes toastIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  @media (max-width:700px){
+    #app{flex-direction:column}
+    #stage{flex:1;min-height:50vh}
+    #side{width:100%;min-width:0;flex:1;border-left:0;border-top:1px solid var(--line)}
+  }
 </style>
 </head>
 <body>
 <div id="app">
   <div id="stage">
     <canvas id="cv"></canvas>
-    <div id="hud">左键=当前工具 · <b>右键拖动</b>=平移 · 滚轮=缩放 · <b>Ctrl+Z</b> 撤销 · 缩放 <b id="hudZoom">100%</b></div>
+    <div id="hud">左键=当前工具 · <b>右键拖动</b>=平移 · 滚轮=缩放 · <b>Ctrl+Z</b> 撤销 · 触屏单指绘制/双指缩放 · 缩放 <b id="hudZoom">100%</b></div>
     <div id="coordHud">—</div>
+  <div id="toast" class="toast hidden">当前显示的是<b>示例地图</b>，直接编辑或点「清空全部」开始自己的规划。</div>
   </div>
 
   <div id="side">
@@ -768,6 +781,7 @@ async function solvePlacementExact(pool,fixed,iters,seed,onProgress){
     }
   }
   enumRec(0,baseTuple.slice());
+  if(tuples.length>200000){return{total:0,msg:'组合数过大（'+tuples.length+'，上限20万）。请减少玄机数量、缩小地图半径，或改用退火求解。'};}
   // 对称性剪枝: 规范代表. (地图本身D6对称, 平移不在其中, 只去旋转/镜像等价)
   const seen=new Set(); const canonical=[];
   for(const tp of tuples){
@@ -929,29 +943,58 @@ function applyTool(q,r, allowToggle){
   }
 }
 
-// ---------- 交互 ----------
+// ---------- 交互（Pointer Events：鼠标/触屏/笔统一处理） ----------
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
-let moved=false, panning=false;
+const pointers=new Map();   // pointerId -> {x,y}，当前按下的指针
+let pinch=null;             // 双指捏合/平移状态
+let moved=false, drawBatch=false;
 function evHex(e){ const r=canvas.getBoundingClientRect(); return pixelToHex(e.clientX-r.left, e.clientY-r.top); }
-canvas.addEventListener('mousedown',e=>{
+function endStroke(){ if(drawBatch){ drawBatch=false; pushHistory(); } }  // 整条笔画=一次撤销
+canvas.addEventListener('pointerdown',e=>{
+  if(e.button===1) e.preventDefault();  // 阻止中键自动滚动
+  canvas.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
   moved=false;
-  if(e.button===2 || state.tool==='select'){
-    panning=true; state.drag={x:e.clientX,y:e.clientY,vx:state.view.x,vy:state.view.y,pan:true};
+  if(pointers.size===2){ state.drag=null; endStroke(); startPinch(); return; } // 双指手势取代单指绘制
+  if(e.button===2 || e.button===1 || state.tool==='select'){
+    state.drag={x:e.clientX,y:e.clientY,vx:state.view.x,vy:state.view.y,pan:true};
     canvas.classList.add('dragging'); return;
   }
-  panning=false;
   const h=evHex(e);
   if(state.cells.has(key(h.q,h.r))){
+    drawBatch=true;
     applyTool(h.q,h.r,true);
     state.drag={lastKey:key(h.q,h.r)};
     refreshAfterEdit();
   }
 });
-window.addEventListener('mousemove',e=>{
+function startPinch(){
+  const [a,b]=[...pointers.values()];
+  const r=canvas.getBoundingClientRect();
+  moved=true;   // 双指手势期间/之后不触发点选
+  pinch={d0:Math.hypot(a.x-b.x,a.y-b.y), cx0:(a.x+b.x)/2-r.left, cy0:(a.y+b.y)/2-r.top,
+         scale0:state.view.scale, vx0:state.view.x, vy0:state.view.y};
+  canvas.classList.add('dragging');
+}
+canvas.addEventListener('pointermove',e=>{
+  if(pointers.has(e.pointerId)) pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
   const h=evHex(e);
   const inMap=state.cells.has(key(h.q,h.r));
   state.hover = inMap?h:null;
   document.getElementById('coordHud').textContent = inMap?`q=${h.q} r=${h.r}`:'—';
+  if(pinch && pointers.size>=2){
+    const [a,b]=[...pointers.values()];
+    const r=canvas.getBoundingClientRect();
+    const d=Math.hypot(a.x-b.x,a.y-b.y);
+    moved=true;
+    const k=Math.max(0.25,Math.min(4,pinch.scale0*d/Math.max(1,pinch.d0)));
+    const cx=(a.x+b.x)/2-r.left, cy=(a.y+b.y)/2-r.top;
+    state.view.scale=k;
+    // 捏合中心处的地图点保持不动；双指中心平移跟随
+    state.view.x=pinch.cx0-(pinch.cx0-pinch.vx0)*k/pinch.scale0+(cx-pinch.cx0);
+    state.view.y=pinch.cy0-(pinch.cy0-pinch.vy0)*k/pinch.scale0+(cy-pinch.cy0);
+    draw(); return;
+  }
   if(state.drag){
     if(state.drag.pan){
       const dx=e.clientX-state.drag.x, dy=e.clientY-state.drag.y;
@@ -968,13 +1011,21 @@ window.addEventListener('mousemove',e=>{
     }
   } else { draw(); }
 });
-window.addEventListener('mouseup',e=>{
-  if(!moved && !panning && state.tool==='select'){
-    const h=evHex(e);
-    if(state.cells.has(key(h.q,h.r))){ state.sel={q:h.q,r:h.r}; updateSelPanel(); draw(); }
+function endPointer(e){
+  pointers.delete(e.pointerId);
+  if(pinch && pointers.size<2){ pinch=null; state.drag=null; }
+  if(pointers.size===0){
+    if(!moved && state.tool==='select'){   // 未拖动=点选（含触屏轻点）
+      const h=evHex(e);
+      if(state.cells.has(key(h.q,h.r))){ state.sel={q:h.q,r:h.r}; updateSelPanel(); }
+    }
+    endStroke();
+    state.drag=null; canvas.classList.remove('dragging');
   }
-  state.drag=null; panning=false; canvas.classList.remove('dragging'); draw();
-});
+  draw();
+}
+canvas.addEventListener('pointerup',endPointer);
+canvas.addEventListener('pointercancel',endPointer);
 canvas.addEventListener('wheel',e=>{
   e.preventDefault();
   const r=canvas.getBoundingClientRect();
@@ -986,7 +1037,7 @@ canvas.addEventListener('wheel',e=>{
   draw();
 },{passive:false});
 
-function refreshAfterEdit(){ pushHistory(); draw(); updateStats(); updateLegend(); if(state.sel) updateSelPanel(); }
+function refreshAfterEdit(){ if(demoToastOn) hideDemoToast(); pushHistory(); draw(); updateStats(); updateLegend(); if(state.sel) updateSelPanel(); }
 
 // ---------- 撤销 / 重做 ----------
 // 快照 = 全部格子内容 + 视图相关设置。单元格对象由 rebuildMap 重建，需拷贝值。
@@ -1013,7 +1064,7 @@ function restoreSnapshot(s){
   state.sel=null; draw(); updateStats(); updateLegend(); updateSelPanel(); saveMapToHash();
 }
 function pushHistory(){
-  if(editHistory.lock) return;
+  if(editHistory.lock || drawBatch) return;  // 笔画进行中不入栈，结束时统一入栈
   const snap=snapshot();
   if(editHistory.idx>=0 && JSON.stringify(editHistory.stack[editHistory.idx])===JSON.stringify(snap)) return;
   editHistory.stack.splice(editHistory.idx+1);
@@ -1114,7 +1165,7 @@ function normalizeTagValue(value, tag){
 function exportHexMap(){
   let s='HEXMAP v2\n';
   s+=`# 导出 ${new Date().toLocaleString()}\n`;
-  s+=`MAP R ${state.hexR}\nCOVER ${state.coverRad}\n`;
+  s+=`MAP R ${state.hexR}\nCOVER ${state.coverRad}\nBGRES ${state.defaultRes}\n`;
   const cols=activeColors();
   if(cols.length){ s+='\n# ── 图例 ──\n'; for(const h of cols){ s+=`LEGEND C ${h} ${state.legendColor.get(h)||'(未命名)'}\n`; } }
   // 按类型+颜色分组输出
@@ -1150,7 +1201,7 @@ function exportHexMap(){
 }
 function applyHexMap(text){
   const lines=text.split(/\r?\n/);
-  let mapR=state.hexR, cover=state.coverRad;
+  let mapR=state.hexR, cover=state.coverRad, bgres=state.defaultRes;
   const patches=[]; const lc=new Map(), lt=new Map();
   let curColor=null;
   for(let raw of lines){
@@ -1161,6 +1212,7 @@ function applyHexMap(text){
     if(up.startsWith('END')) break;
     if(up.startsWith('MAP')){ const p=line.split(/\s+/); mapR=Math.max(1,parseInt(p[2]||p[1]||5)||5); continue; }
     if(up.startsWith('COVER')){ cover=Math.max(1,parseInt(line.split(/\s+/)[1])||3); continue; }
+    if(up.startsWith('BGRES')){ bgres=Math.max(0,parseFloat(line.split(/\s+/)[1])||0); continue; }
     if(up.startsWith('LEGEND')){ const m=line.match(/^LEGEND\s+([CT])\s+(\S+)\s+(.*)$/i); if(m){ if(m[1].toUpperCase()==='C') lc.set(m[2].toLowerCase(),m[3]); else lt.set(m[2],m[3]); } continue; }
     if(up.startsWith('COLOR')){ curColor=line.split(/\s+/)[1].toLowerCase(); continue; }
     if(up.startsWith('PLAIN')){ curColor=null; continue; }
@@ -1171,9 +1223,10 @@ function applyHexMap(text){
       patches.push({q:+m[1],r:+m[2],value:nv.value,color:curColor,tag:nv.tag});
     }
   }
-  state.hexR=mapR; state.coverRad=cover;
+  state.hexR=mapR; state.coverRad=cover; state.defaultRes=bgres;
   document.getElementById('mapR').value=mapR;
   document.getElementById('coverRad').value=cover;
+  const dr=document.getElementById('defaultResInput'); if(dr) dr.value=bgres;
   rebuildMap(false);
   for(const p of patches){
     if(!state.cells.has(key(p.q,p.r))) continue;
@@ -1248,6 +1301,9 @@ function writeBackSolveResult(r, pool, meta){
 async function runSolver(seedOverride){
   const hint=document.getElementById('solveHint');
   const mode=document.getElementById('solveMode').value;
+  const solveBtns=['btnSolve','btnSolveAgain','btnExportSolve'];
+  const setSolveBusy=b=>solveBtns.forEach(id=>document.getElementById(id).disabled=b);
+  setSolveBusy(true);
   state.defaultRes=Math.max(0,+document.getElementById('defaultResInput').value||0);
   // 组件池：只摆特殊格（玄/苦/嫁/循）。资源作为背景=defaultRes，不参与摆布
   const pool={
@@ -1273,21 +1329,24 @@ async function runSolver(seedOverride){
       r=await solvePlacementExact(pool,fixed,iters,seed,(done,total,best)=>{
         hint.innerHTML=`精确求解中… ${done}/${total} 拓扑，当前最高 <b style="color:var(--gold)">${best}</b>`;
       });
-    }catch(e){ hint.textContent='精确求解出错：'+e.message; console.error(e); return; }
-    if(r.msg){ hint.textContent=r.msg; return; }
+    }catch(e){ hint.textContent='精确求解出错：'+e.message; console.error(e); setSolveBusy(false); return; }
+    if(r.msg){ hint.textContent=r.msg; setSolveBusy(false); return; }
     const meta={solver:'exact',exploreCount:r.exploreCount,duration:performance.now()-t0};
-    const wb=writeBackSolveResult(r,pool,meta); if(!wb) return;
+    const wb=writeBackSolveResult(r,pool,meta); if(!wb){ setSolveBusy(false); return; }
     hint.innerHTML=`精确求解完成（枚举 ${r.exploreCount} 个对称等价拓扑，${(meta.duration/1000).toFixed(1)}s）。<b style="color:var(--gold)">总分 ${r.total}</b>`+
       (r.symDegree?` <span class="hint" style="flex:none">对称度${r.symDegree}</span>`:'')+`<br>`+
       `摆布：玄机${wb.cnt.xuan} 苦功${wb.cnt.kugong} 嫁衣${wb.cnt.jiayi} 循序${wb.cnt.xunxu}（背景资源每格=${state.defaultRes}）`;
+    setSolveBusy(false);
   }else{
     hint.innerHTML='退火求解中…（可能卡顿几秒）';
     setTimeout(()=>{
       const r=solvePlacement(pool,fixed,iters,seed);
+      if(r.msg){ hint.textContent=r.msg; setSolveBusy(false); return; }
       const meta={solver:'anneal',iters,seed};
-      const wb=writeBackSolveResult(r,pool,meta); if(!wb) return;
+      const wb=writeBackSolveResult(r,pool,meta); if(!wb){ setSolveBusy(false); return; }
       hint.innerHTML=`求解完成（迭代 ${iters}，种子 ${seed}）。<b style="color:var(--gold)">总分 ${r.total}</b><br>`+
         `摆布：玄机${wb.cnt.xuan} 苦功${wb.cnt.kugong} 嫁衣${wb.cnt.jiayi} 循序${wb.cnt.xunxu}（背景资源每格=${state.defaultRes}）`;
+      setSolveBusy(false);
     },20);
   }
 }
@@ -1332,9 +1391,15 @@ XUNXU ${byType.xunxu.join(' ')}
 };
 
 document.getElementById('btnExport').onclick=()=>{ document.getElementById('ioText').value=exportHexMap(); };
-document.getElementById('btnApply').onclick=()=>{ const t=document.getElementById('ioText').value; if(t.trim()) applyHexMap(t); };
+document.getElementById('btnApply').onclick=()=>{
+  const t=document.getElementById('ioText').value;
+  if(!t.trim()) return;
+  try{
+    applyHexMap(t);
+  }catch(err){ alert('HexMap 文本解析失败：'+err.message); }
+};
 document.getElementById('btnExportJSON').onclick=()=>{
-  const data={hexR:state.hexR,coverRad:state.coverRad,
+  const data={hexR:state.hexR,coverRad:state.coverRad,defaultRes:state.defaultRes,
     legendColor:[...state.legendColor.entries()],legendTag:[...state.legendTag.entries()],
     cells:[...state.cells.values()].filter(c=>c.color||c.value!==null||c.tag).map(c=>[c.q,c.r,c.value,c.color,c.tag])};
   document.getElementById('jsonText').value=JSON.stringify(data,null,2);
@@ -1342,9 +1407,10 @@ document.getElementById('btnExportJSON').onclick=()=>{
 document.getElementById('btnImportJSON').onclick=()=>{
   try{
     const d=JSON.parse(document.getElementById('jsonText').value);
-    state.hexR=d.hexR||5; state.coverRad=d.coverRad||3;
+    state.hexR=d.hexR||5; state.coverRad=d.coverRad||3; state.defaultRes=Math.max(0,+d.defaultRes||0);
     document.getElementById('mapR').value=state.hexR;
     document.getElementById('coverRad').value=state.coverRad;
+    const drI=document.getElementById('defaultResInput'); if(drI) drI.value=state.defaultRes;
     rebuildMap(false);
     state.legendColor=new Map(d.legendColor||[]); state.legendTag=new Map(d.legendTag||[]);
     (d.cells||[]).forEach(([q,r,v,col,tg])=>{ if(state.cells.has(key(q,r))){ const c=ensureCell(q,r); c.value=(v==null?null:v); c.color=col||null; c.tag=tg||null; } });
@@ -1439,7 +1505,7 @@ async function copyText(t){
 document.getElementById('btnShareLink').onclick=async()=>{
   const hint=document.getElementById('shareHint');
   clearTimeout(shareTimer);
-  const url=location.origin+location.pathname+'#m='+b64encodeUtf8(encodeMapState());
+  const url=location.href.split('#')[0]+'#m='+b64encodeUtf8(encodeMapState());  // file:// 下 origin 为 "null"，改用 href 剥锚点
   const ok=await copyText(url);
   hint.textContent = ok?'链接已复制！直接发给对方，打开就是当前这张图（浏览器地址栏粘贴打开也行）。'
                       :'复制失败，请手动复制地址栏中的链接（已包含当前地图）。';
@@ -1477,6 +1543,7 @@ const HELP_HTML=`
 <pre class="formula">HEXMAP v2
 MAP R 5
 COVER 3
+BGRES 1
 
 COLOR #ffd25a  # 玄机格
 (0,0):玄 (1,-2):玄 (3,-1):玄
@@ -1490,14 +1557,17 @@ PLAIN
 (-2,0)=2 (1,-2)=1
 END</pre>
 
-<h3 class="help">快捷键</h3>
+<h3 class="help">快捷键与手势</h3>
 <table class="help">
-<tr><th>按键</th><th>作用</th></tr>
+<tr><th>操作</th><th>作用</th></tr>
 <tr><td><code>1</code>~<code>4</code></td><td>选择 / 涂色 / 数值 / 擦除</td></tr>
 <tr><td><code>Q W E R T</code></td><td>普通 / 玄机 / 苦功 / 嫁衣 / 循序</td></tr>
-<tr><td><code>Ctrl+Z</code> / <code>Ctrl+Y</code></td><td>撤销 / 重做</td></tr>
+<tr><td><code>Ctrl+Z</code> / <code>Ctrl+Y</code></td><td>撤销 / 重做（整条拖动笔画=一步）</td></tr>
 <tr><td><code>F</code></td><td>居中适配</td></tr>
 <tr><td><code>Esc</code></td><td>取消选中</td></tr>
+<tr><td>右键/中键拖动</td><td>平移视图</td></tr>
+<tr><td>触屏单指</td><td>绘制 / 点选</td></tr>
+<tr><td>触屏双指</td><td>捏合缩放 + 平移</td></tr>
 </table>
 
 <h3 class="help">两种用法</h3>
@@ -1518,6 +1588,9 @@ END</pre>
 <p class="help" style="color:var(--accent)">遇到新元素：用新颜色/标签标出来，图例写清含义与规则，导出即可。</p>`;
 
 // ---------- 初始化 ----------
+const toastEl=document.getElementById('toast');
+let demoToastOn=false;
+function hideDemoToast(){ if(demoToastOn){ demoToastOn=false; toastEl.classList.add('hidden'); } }
 function init(){
   buildPalette();
   const restored = loadMapFromHash();
@@ -1530,6 +1603,9 @@ function init(){
       if(state.cells.has(key(q,r))){ const c=ensureCell(q,r); Object.assign(c,v); }
     }
     pushHistory();
+    demoToastOn=true; toastEl.classList.remove('hidden');
+    setTimeout(hideDemoToast, 12000);
+    toastEl.onclick=hideDemoToast;
   }
   resize(); fitView(); updateAll();
 }
