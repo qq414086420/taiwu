@@ -90,7 +90,7 @@
   .xg-item .c{color:var(--gold);font-family:ui-monospace,Consolas,monospace}
   .xg-item .n{color:var(--good);font-weight:700}
   .gather-row{display:flex;justify-content:space-between;font-size:11px;padding:3px 8px;
-    font-family:ui-monospace,Consolas,monospace;color:var(--dim);border-bottom:1px solid #1dcello}
+    font-family:ui-monospace,Consolas,monospace;color:var(--dim);border-bottom:1px solid #1d2450}
   .gather-row .contrib{color:var(--good);font-weight:700}
 </style>
 </head>
@@ -98,7 +98,7 @@
 <div id="app">
   <div id="stage">
     <canvas id="cv"></canvas>
-    <div id="hud">左键=当前工具 · <b>右键拖动</b>=平移 · 滚轮=缩放 · 缩放 <b id="hudZoom">100%</b></div>
+    <div id="hud">左键=当前工具 · <b>右键拖动</b>=平移 · 滚轮=缩放 · <b>Ctrl+Z</b> 撤销 · 缩放 <b id="hudZoom">100%</b></div>
     <div id="coordHud">—</div>
   </div>
 
@@ -119,6 +119,10 @@
         <label><input type="radio" name="tool" value="paint"><span>🖌 涂色</span></label>
         <label><input type="radio" name="tool" value="value"><span>🔢 数值</span></label>
         <label><input type="radio" name="tool" value="erase"><span>⌫ 擦除</span></label>
+      </div>
+      <div class="row">
+        <button class="btn grow" id="btnUndo" disabled title="Ctrl+Z">↶ 撤销</button>
+        <button class="btn grow" id="btnRedo" disabled title="Ctrl+Y">↷ 重做</button>
       </div>
 
       <h3>格子类型（左键设置/拖动批量）</h3>
@@ -261,6 +265,13 @@
         <button class="btn grow" id="btnCopyJSON">复制</button>
       </div>
       <textarea id="jsonText" placeholder="完整数据备份..."></textarea>
+
+      <h3>链接分享（自动保存）</h3>
+      <div class="hint">编辑内容会自动保存到浏览器地址栏，刷新/收藏不丢。点下面按钮生成含当前地图的链接，发给他人打开即是同一张图。</div>
+      <div class="row">
+        <button class="btn primary grow" id="btnShareLink">🔗 复制链接（含当前地图）</button>
+      </div>
+      <div class="hint" id="shareHint"></div>
     </div>
 
     <!-- ===== 说明 ===== -->
@@ -975,7 +986,48 @@ canvas.addEventListener('wheel',e=>{
   draw();
 },{passive:false});
 
-function refreshAfterEdit(){ draw(); updateStats(); updateLegend(); if(state.sel) updateSelPanel(); }
+function refreshAfterEdit(){ pushHistory(); draw(); updateStats(); updateLegend(); if(state.sel) updateSelPanel(); }
+
+// ---------- 撤销 / 重做 ----------
+// 快照 = 全部格子内容 + 视图相关设置。单元格对象由 rebuildMap 重建，需拷贝值。
+const editHistory={stack:[],idx:-1,depth:40,lock:false};
+function snapshot(){
+  const cells=[];
+  for(const c of state.cells.values())
+    if(c.color!==null||c.value!==null||c.tag!==null) cells.push([c.q,c.r,c.value,c.color,c.tag]);
+  return {hexR:state.hexR,coverRad:state.coverRad,defaultRes:state.defaultRes,
+    legendColor:[...state.legendColor.entries()],legendTag:[...state.legendTag.entries()],cells};
+}
+function restoreSnapshot(s){
+  state.hexR=s.hexR; state.coverRad=s.coverRad; state.defaultRes=s.defaultRes;
+  state.legendColor=new Map(s.legendColor); state.legendTag=new Map(s.legendTag);
+  rebuildMap(false); editHistory.lock=true;
+  for(const [q,r,v,col,tag] of s.cells){
+    const c=state.cells.get(key(q,r)); if(!c) continue;
+    c.value=v; c.color=col; c.tag=tag;
+  }
+  editHistory.lock=false;
+  const el=document.getElementById('mapR'); if(el) el.value=state.hexR;
+  const cr=document.getElementById('coverRad'); if(cr) cr.value=state.coverRad;
+  const dr=document.getElementById('defaultResInput'); if(dr) dr.value=state.defaultRes;
+  state.sel=null; draw(); updateStats(); updateLegend(); updateSelPanel(); saveMapToHash();
+}
+function pushHistory(){
+  if(editHistory.lock) return;
+  const snap=snapshot();
+  if(editHistory.idx>=0 && JSON.stringify(editHistory.stack[editHistory.idx])===JSON.stringify(snap)) return;
+  editHistory.stack.splice(editHistory.idx+1);
+  editHistory.stack.push(snap);
+  if(editHistory.stack.length>editHistory.depth) editHistory.stack.shift();
+  editHistory.idx=editHistory.stack.length-1;
+  updateUndoBtns();
+}
+function undo(){ if(editHistory.idx<=0) return; editHistory.idx--; restoreSnapshot(editHistory.stack[editHistory.idx]); updateUndoBtns(); }
+function redo(){ if(editHistory.idx>=editHistory.stack.length-1) return; editHistory.idx++; restoreSnapshot(editHistory.stack[editHistory.idx]); updateUndoBtns(); }
+function updateUndoBtns(){
+  document.getElementById('btnUndo').disabled = editHistory.idx<=0;
+  document.getElementById('btnRedo').disabled = editHistory.idx>=editHistory.stack.length-1;
+}
 
 // ---------- 面板 ----------
 function updateSelPanel(){
@@ -1018,7 +1070,7 @@ function updateStats(){
   const gl=document.getElementById('gatherList');
   if(!st.gathered.length){ gl.innerHTML='<div class="hint">无被采集格（设玄机格或给普通格加资源）。</div>'; }
   else gl.innerHTML=st.gathered.slice().sort((a,b)=>b.contrib-a.contrib).map(s=>
-    `<div class="gather-row"><span>(${s.cell.q},${s.cell.r}) ${s.type==='xunxu'?'循序':'普通'} 基础${s.base} 实际${s.real} ×${s.count}</span><span class="contrib">+${s.contrib}</span></div>`).join('');
+    `<div class="gather-row"><span>(${s.cell.q},${s.cell.r}) ${{xunxu:'循序',kugong:'苦功',jiayi:'嫁衣'}[s.type]||'普通'} 基础${s.base} 实际${s.real} ×${s.count}</span><span class="contrib">+${s.contrib}</span></div>`).join('');
 }
 function activeColors(){ const s=new Set(); for(const c of state.cells.values()) if(c.color) s.add(c.color); return [...s]; }
 function activeTags(){ const s=new Set(); for(const c of state.cells.values()) if(c.tag && typeOf(c)==='plain') s.add(c.tag); return [...s]; }
@@ -1174,6 +1226,8 @@ document.getElementById('defaultResInput')&&(document.getElementById('defaultRes
 ['optCover','optCoord','optVal','optGrid'].forEach(id=>document.getElementById(id).onchange=draw);
 document.getElementById('btnFit').onclick=fitView;
 document.getElementById('btnRotate').onclick=rotateMap;
+document.getElementById('btnUndo').onclick=undo;
+document.getElementById('btnRedo').onclick=redo;
 document.getElementById('btnClearAll').onclick=()=>{ if(confirm('清空所有格子的颜色/数值/标签？')){ for(const c of state.cells.values()){c.color=null;c.value=null;c.tag=null;} refreshAfterEdit(); } };
 
 function writeBackSolveResult(r, pool, meta){
@@ -1300,6 +1354,98 @@ document.getElementById('btnImportJSON').onclick=()=>{
 document.getElementById('btnCopyJSON').onclick=()=>{ const t=document.getElementById('jsonText'); t.select(); document.execCommand('copy'); };
 window.addEventListener('resize',resize);
 
+// ---------- 快捷键 ----------
+const TOOL_KEYS={ '1':'select','2':'paint','3':'value','4':'erase',
+  'q':'plain','w':'xuan','e':'kugong','r':'jiayi','t':'xunxu' };
+window.addEventListener('keydown',e=>{
+  if(e.ctrlKey||e.metaKey){
+    const k=e.key.toLowerCase();
+    if(k==='z'&&!e.shiftKey){ e.preventDefault(); undo(); }
+    else if(k==='y'||(k==='z'&&e.shiftKey)){ e.preventDefault(); redo(); }
+    return;
+  }
+  if(e.key==='Escape'){ state.sel=null; updateSelPanel(); draw(); return; }
+  const el=document.activeElement;
+  if(el&&(el.tagName==='INPUT'||el.tagName==='TEXTAREA'||el.tagName==='SELECT')) return;
+  if(e.key==='f'||e.key==='F'){ fitView(); return; }
+  const tool=TOOL_KEYS[e.key.toLowerCase()];
+  if(tool){
+    const radio=document.querySelector(`input[name="tool"][value="${tool}"]`);
+    if(radio){ radio.checked=true; radio.dispatchEvent(new Event('change')); }
+  }
+});
+
+// ---------- URL 自动保存 / 链接分享 ----------
+function encodeMapState(){
+  return JSON.stringify({v:1,hexR:state.hexR,coverRad:state.coverRad,defaultRes:state.defaultRes,
+    legendColor:[...state.legendColor.entries()],legendTag:[...state.legendTag.entries()],
+    cells:snapshot().cells});
+}
+function b64encodeUtf8(s){
+  const bytes=new TextEncoder().encode(s); let bin='';
+  for(const b of bytes) bin+=String.fromCharCode(b);
+  return btoa(bin).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');
+}
+function b64decodeUtf8(t){
+  let b=t.replaceAll('-','+').replaceAll('_','/');
+  while(b.length%4) b+='=';
+  const bin=atob(b); const bytes=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+function decodeMapState(str){
+  const d=JSON.parse(str);
+  if(typeof d!=='object'||d===null||!Array.isArray(d.cells)) throw new Error('bad map');
+  state.hexR=Math.max(1,+d.hexR||5); state.coverRad=Math.max(1,+d.coverRad||3); state.defaultRes=Math.max(0,+d.defaultRes||0);
+  state.legendColor=new Map(d.legendColor||[]); state.legendTag=new Map(d.legendTag||[]);
+  rebuildMap(false);
+  for(const [q,r,v,col,tag] of d.cells){
+    const c=state.cells.get(key(q,r)); if(!c) continue;
+    c.value=(v==null?null:v); c.color=col||null; c.tag=tag||null;
+  }
+  const el=document.getElementById('mapR'); if(el) el.value=state.hexR;
+  const cr=document.getElementById('coverRad'); if(cr) cr.value=state.coverRad;
+  const dr=document.getElementById('defaultResInput'); if(dr) dr.value=state.defaultRes;
+  refreshAfterEdit(); fitView();
+}
+let shareTimer=null;
+function saveMapToHash(){
+  clearTimeout(shareTimer);
+  shareTimer=setTimeout(()=>{
+    try{
+      window.history.replaceState(null,'','#m='+b64encodeUtf8(encodeMapState()));
+    }catch(e){ /* 状态编码失败时忽略，不影响编辑 */ }
+  },400);
+}
+const _origRefreshAfterEdit=refreshAfterEdit;
+refreshAfterEdit=function(){ _origRefreshAfterEdit(); saveMapToHash(); };
+function loadMapFromHash(){
+  const m=location.hash.match(/[#&]m=([A-Za-z0-9\-_]+)/);
+  if(!m) return false;
+  try{
+    decodeMapState(b64decodeUtf8(m[1]));
+    return true;
+  }catch(e){ return false; }
+}
+async function copyText(t){
+  try{ await navigator.clipboard.writeText(t); return true; }
+  catch(e){
+    try{
+      const ta=document.createElement('textarea'); ta.value=t; document.body.appendChild(ta);
+      ta.select(); const ok=document.execCommand('copy'); document.body.removeChild(ta); return ok;
+    }catch(e2){ return false; }
+  }
+}
+document.getElementById('btnShareLink').onclick=async()=>{
+  const hint=document.getElementById('shareHint');
+  clearTimeout(shareTimer);
+  const url=location.origin+location.pathname+'#m='+b64encodeUtf8(encodeMapState());
+  const ok=await copyText(url);
+  hint.textContent = ok?'链接已复制！直接发给对方，打开就是当前这张图（浏览器地址栏粘贴打开也行）。'
+                      :'复制失败，请手动复制地址栏中的链接（已包含当前地图）。';
+};
+
+
 // ---------- 说明 ----------
 const HELP_HTML=`
 <h3 class="help">四种格子与规则</h3>
@@ -1309,14 +1455,14 @@ const HELP_HTML=`
 <tr><td>玄机格 ✦</td><td><code>玄</code></td><td>采集半径 R(默认3) 内所有非玄机格</td><td>否（自身不计）</td></tr>
 <tr><td>苦功格 ⚒</td><td><code>苦</code></td><td>相邻6格每格 <b>+2</b>（不给自己脚下加）</td><td>是</td></tr>
 <tr><td>嫁衣格 ◕</td><td><code>嫁</code></td><td>相邻6格每格 <b>+1</b>（不给自己脚下加）</td><td>是</td></tr>
-<tr><td>循序格 ↻</td><td><code>循/序</code></td><td>实际分 += 邻居中被任一玄机覆盖的格子数</td><td>是</td></tr>
+<tr><td>循序格 ↻</td><td><code>循/序</code></td><td>实际分 += 相邻<b>在图</b>格子数（内圈恒 6，玄机邻居也算）</td><td>是</td></tr>
 </table>
 
 <h3 class="help">实际分数</h3>
 <p class="help">
 对任意<b>非玄机格</b>：<br>
 实际分 = 基础值 + 2×相邻苦功数 + 1×相邻嫁衣数<br>
-若是<b>循序格</b>，再 + (邻居中被任一玄机格覆盖的格子数，不计玄机邻居、不重复)。
+若是<b>循序格</b>，再 + 相邻<b>在图</b>格子数（六边形地图内圈恒为 6，玄机邻居也计入）。
 </p>
 
 <h3 class="help">总分</h3>
@@ -1344,12 +1490,22 @@ PLAIN
 (-2,0)=2 (1,-2)=1
 END</pre>
 
+<h3 class="help">快捷键</h3>
+<table class="help">
+<tr><th>按键</th><th>作用</th></tr>
+<tr><td><code>1</code>~<code>4</code></td><td>选择 / 涂色 / 数值 / 擦除</td></tr>
+<tr><td><code>Q W E R T</code></td><td>普通 / 玄机 / 苦功 / 嫁衣 / 循序</td></tr>
+<tr><td><code>Ctrl+Z</code> / <code>Ctrl+Y</code></td><td>撤销 / 重做</td></tr>
+<tr><td><code>F</code></td><td>居中适配</td></tr>
+<tr><td><code>Esc</code></td><td>取消选中</td></tr>
+</table>
+
 <h3 class="help">两种用法</h3>
 <p class="help">
 <b>① 已知固定布局</b>（地图特殊格/资源位置已定，只调玄机）：把地图标好 → 直接看「规划」页总分。<br>
-<b>② 自由排布</b>（一局给你一堆组件，全要摆）：地图留空或只标"锁死不动"的格子 → 在「自动排布」填组件池（玄机/苦功/嫁衣/循序数量 + 资源数值列表）→ 求解器自动摆到最优位。
+<b>② 自由排布</b>（一局给你一堆组件，全要摆）：点「求最优摆布」前求解器会先清空地图上的特殊格，然后按下方填写的数量重新摆放；背景资源由「背景资源」框统一决定。
 </p>
-<p class="help"><b>关于"固定项"</b>：地图上<b>已标注</b>的格子（特殊格或带数字的资源格）会被求解器视为<b>锁死不动</b>；未标注的空位才参与分配。想让求解器自由分配资源，就把数值填进"资源数值"框、地图上别标。</p>
+<p class="help"><b>关于背景资源</b>：未手动标数值的格子按「背景资源」框的值计分（默认每格 1）。想让求解器自由摆放特殊格，地图上就别预标特殊格——点了求解会先清掉它们。</p>
 
 <h3 class="help">协作流程</h3>
 <ol class="help">
@@ -1364,12 +1520,16 @@ END</pre>
 // ---------- 初始化 ----------
 function init(){
   buildPalette();
-  rebuildMap(false);
-  // 示例：例2的数据
-  const ex={ '0,-4':{value:1}, '0,-3':{tag:'苦功_1'}, '0,-2':{tag:'嫁衣_1'}, '0,-1':{value:3}, '0,0':{tag:'玄'}, '1,-3':{value:2} };
-  for(const [k,v] of Object.entries(ex)){
-    const [q,r]=k.split(',').map(Number);
-    if(state.cells.has(key(q,r))){ const c=ensureCell(q,r); Object.assign(c,v); }
+  const restored = loadMapFromHash();
+  if(!restored){
+    rebuildMap(false);
+    // 示例：例2的数据
+    const ex={ '0,-4':{value:1}, '0,-3':{tag:'苦功_1'}, '0,-2':{tag:'嫁衣_1'}, '0,-1':{value:3}, '0,0':{tag:'玄'}, '1,-3':{value:2} };
+    for(const [k,v] of Object.entries(ex)){
+      const [q,r]=k.split(',').map(Number);
+      if(state.cells.has(key(q,r))){ const c=ensureCell(q,r); Object.assign(c,v); }
+    }
+    pushHistory();
   }
   resize(); fitView(); updateAll();
 }
